@@ -37,6 +37,7 @@ class RedactTests(unittest.TestCase):
             ("db_password = s3cretPass!", "s3cretPass!"),
             ('{"client_secret": "abcd1234efgh"}', "abcd1234efgh"),
             ("Authorization: Bearer abcdef1234567890xyz", "abcdef1234567890xyz"),
+            ("authorization = Bearer abcdef1234567890xyz", "abcdef1234567890xyz"),
             ("export STRIPE_TOKEN=zzzzzzzzzzzz", "zzzzzzzzzzzz"),
         ]:
             with self.subTest(text=text):
@@ -66,6 +67,8 @@ class RedactTests(unittest.TestCase):
             "key = ${API_KEY}",
             "Fix the auth middleware so it returns 401",
             "def authenticate(token: str) -> bool:",
+            "Authorization: Bearer <key> and X-Session-Id",
+            "git config credential.https://github.com.username NAME",
             "git commit -m 'fix bug' && ls src/components",
         ]:
             with self.subTest(text=text):
