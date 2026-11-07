@@ -127,6 +127,13 @@ class Adapter(ABC):
             f"{self.display_name} sessions can't be looked up yet; "
             "pipe a hook payload into `raindrop sync --dry-run` instead."
         )
+    def hook_stdout(self) -> str | None:
+        """Text `raindrop sync` prints to stdout when this tool's hook finishes.
+
+        Almost always None: some tools add a hook's stdout to the agent's context.
+        A tool whose Stop hook must answer on stdout (Antigravity wants a JSON
+        decision) returns that answer here."""
+        return None
 
     def capture(self, payload: dict) -> None:
         """Event-capture tools (no readable transcript) override this to spool

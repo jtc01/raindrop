@@ -16,8 +16,8 @@ def wired(monkeypatch):
 
     def fake_recent(team_id, n, exclude_agent_id=None, s3=None):
         calls.update(team_id=team_id, n=n, exclude=exclude_agent_id)
-        return [{"agent_id": "bob", "session_id": "s", "ts": 5, "files_touched": ["a.py"],
-                 "user_text": "q", "assistant_text": "x" * 5000}]
+        return calls.get("results", [{"agent_id": "bob", "session_id": "s", "ts": 5, "files_touched": ["a.py"],
+                                      "user_text": "q", "assistant_text": "x" * 5000}])
 
     monkeypatch.setattr(app.recent, "recent_activity", fake_recent)
     return calls
@@ -31,13 +31,22 @@ def call(args):
     return asyncio.run(go())
 
 
-def test_tool_is_registered_and_returns_attributed_trimmed_results(wired):
-    tools, data = call({"n": 3})
+def test_tool_is_registered_and_returns_attributed_trimmed_text(wired):
+    # The tools return compact labeled lines for an agent to read, not raw dicts.
+    tools, text = call({"n": 3})
     assert "get_recent_activity" in tools
-    [r] = data["results"]
-    assert r["display_name"] == "Bob" and r["agent_id"] == "bob" and r["ts"] == 5
-    assert r["files_touched"] == ["a.py"] and len(r["assistant_text"]) < 1600  # trimmed
-    assert wired == {"team_id": "t1", "n": 3, "exclude": "me"}  # caller excluded by default
+    [line] = text.splitlines()
+    assert line.startswith('- Bob (1970-01-01 00:00 UTC): "q" -> "'.replace("->", "→"))  # who, when, prompt
+    assert line.endswith("[files: a.py]")
+    assert len(line) < 400  # the 5000-character reply is trimmed to a snippet
+    assert wired["team_id"] == "t1" and wired["n"] == 3
+    assert wired["exclude"] == "me"  # the caller is left out by default
+
+
+def test_empty_result_says_so(wired):
+    wired["results"] = []
+    _, text = call({})
+    assert text == "No recent activity."
 
 
 def test_include_self_and_n_is_clamped(wired):

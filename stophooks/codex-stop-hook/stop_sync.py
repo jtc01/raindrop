@@ -282,15 +282,26 @@ def sync_stop(payload: dict[str, Any], transport: Any = None) -> int:
         if not isinstance(cfg.get(key), str) or not cfg[key]:
             raise SyncError(f"Raindrop config is missing {key}.")
 
+    cwd_for_exchanges = payload.get("cwd") if isinstance(payload.get("cwd"), str) else str(Path.cwd())
     exchanges = _extract_exchanges(
         records,
         session_id,
         state["next_idx"],
-        payload.get("cwd") if isinstance(payload.get("cwd"), str) else str(Path.cwd()),
+        cwd_for_exchanges,
         payload.get("last_assistant_message"),
     )
     if not exchanges:
         raise SyncError("Could not find a completed user/assistant exchange in the Codex transcript.")
+
+    if not config.should_share(cwd_for_exchanges, cfg):
+        # Paused, or this repo isn't opted in (`raindrop share`). Pass over the turn without
+        # uploading and move the cursor past it, so it is skipped for good and never queued
+        # for a later upload if sharing is switched on.
+        _save_state(state_path, {
+            "offset": new_offset,
+            "next_idx": exchanges[-1].idx + 1,
+        })
+        return 0
 
     known_secrets = [cfg["api_key"]]
     cwd = payload.get("cwd")
@@ -331,8 +342,9 @@ def main() -> int:
     except (OSError, json.JSONDecodeError) as exc:
         print(f"Raindrop Codex sync could not read hook input: {exc}", file=sys.stderr)
         return 1
-    noun = "exchange" if accepted == 1 else "exchanges"
-    print(f"Raindrop synced {accepted} {noun}.")
+    if accepted:  # 0 means nothing was uploaded because this repo isn't shared (or sharing is paused)
+        noun = "exchange" if accepted == 1 else "exchanges"
+        print(f"Raindrop synced {accepted} {noun}.")
     return 0
 
 

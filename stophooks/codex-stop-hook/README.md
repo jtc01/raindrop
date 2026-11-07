@@ -21,6 +21,9 @@ same exchange ID, which the API stores idempotently.
 - Python 3.10+
 - `raindrop-cli` alongside the `stophooks` folder in the Raindrop repository
 - A joined Raindrop team (`raindrop join ...`)
+- Sharing enabled for the repo: by default Raindrop uploads only from repos you opted in with
+  `raindrop share --repo` (or every repo after `raindrop share`), and nothing uploads after
+  `raindrop pause`. A skipped turn is passed over for good, not queued for later.
 - Codex with hooks enabled and an accessible `~/.codex/sessions` transcript
 
 ## Configure the hook

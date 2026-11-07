@@ -1,9 +1,10 @@
 """raindrop/adapters/_file_config.py
 
 Base for tools that are installed purely by editing config files: one MCP
-entry in a JSON file under `mcpServers`, plus optional rules text. There is no
-stop hook yet (NoSyncMixin), so these tools can read team context but don't
-share the user's own sessions.
+entry in a JSON file under `mcpServers`, plus optional rules text. A tool with
+no stop hook yet inherits NoSyncMixin (it can read team context but doesn't share
+the user's own sessions); Antigravity and Copilot override it with a real hook
+and transcript parser.
 
 Subclasses set name/display_name and implement the path and content hooks.
 """

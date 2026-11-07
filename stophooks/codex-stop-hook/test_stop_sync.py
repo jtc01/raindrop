@@ -62,7 +62,9 @@ class CodexStopSyncTests(unittest.TestCase):
             "transcript_path": str(self.transcript),
             "cwd": str(self.cwd),
         }
-        self.cfg = {"api_url": "https://example.test", "api_key": "api-key-123456"}
+        # Raindrop uploads only from repos you opted in to; these tests opt in everywhere.
+        self.cfg = {"api_url": "https://example.test", "api_key": "api-key-123456",
+                    "sharing": {"mode": "all"}}
 
     def tearDown(self) -> None:
         self.temp.cleanup()
@@ -186,6 +188,69 @@ class CodexStopSyncTests(unittest.TestCase):
         )
         state = json.loads((self.state_root / f"{self.session_id}.json").read_text())
         self.assertEqual(state["next_idx"], 2)
+
+    def sync_with(self, cfg: dict, requests: list) -> int:
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(json.loads(request.content))
+            return httpx.Response(200, json={"accepted": len(requests[-1]["exchanges"]), "ids": []})
+
+        with (
+            patch.object(stop_sync, "_session_root", return_value=self.sessions),
+            patch.object(stop_sync, "_state_root", return_value=self.state_root),
+            patch.object(stop_sync.config, "load", return_value=cfg),
+        ):
+            return stop_sync.sync_stop(self.payload, httpx.MockTransport(handler))
+
+    def state(self) -> dict:
+        return json.loads((self.state_root / f"{self.session_id}.json").read_text())
+
+    def test_does_not_upload_from_a_repo_that_is_not_shared(self) -> None:
+        # Default sharing mode is opt-in: nothing uploads until `raindrop share --repo`.
+        cfg = {"api_url": "https://example.test", "api_key": "api-key-123456"}
+        requests: list = []
+        self.assertEqual(self.sync_with(cfg, requests), 0)
+        self.assertEqual(requests, [])
+        # The skipped turn is passed over for good, not queued for a later upload.
+        self.assertEqual(self.state()["next_idx"], 1)
+        self.assertEqual(self.state()["offset"], self.transcript.stat().st_size)
+
+    def test_does_not_upload_while_sharing_is_paused(self) -> None:
+        cfg = {**self.cfg, "sharing": {"mode": "all", "paused": True}}
+        requests: list = []
+        self.assertEqual(self.sync_with(cfg, requests), 0)
+        self.assertEqual(requests, [])
+        self.assertEqual(self.state()["next_idx"], 1)
+
+    def test_does_not_upload_from_a_paused_repo(self) -> None:
+        cfg = {**self.cfg, "sharing": {"mode": "all",
+                                       "paused_repos": [str(stop_sync.config.repo_root(self.cwd))]}}
+        requests: list = []
+        self.assertEqual(self.sync_with(cfg, requests), 0)
+        self.assertEqual(requests, [])
+
+    def test_uploads_from_a_repo_that_was_opted_in(self) -> None:
+        cfg = {**self.cfg, "sharing": {"mode": "opt_in",
+                                       "shared_repos": [str(stop_sync.config.repo_root(self.cwd))]}}
+        requests: list = []
+        self.assertEqual(self.sync_with(cfg, requests), 1)
+        self.assertEqual(len(requests), 1)
+
+    def test_skipped_content_is_not_uploaded_after_opting_in_later(self) -> None:
+        unshared = {"api_url": "https://example.test", "api_key": "api-key-123456"}
+        requests: list = []
+        self.sync_with(unshared, requests)  # first turn skipped
+        second = [
+            {"timestamp": "2026-11-07T18:01:00Z", "type": "response_item",
+             "payload": {"type": "message", "role": "user",
+                         "content": [{"type": "input_text", "text": "Now add a test"}]}},
+            {"timestamp": "2026-11-07T18:01:01Z", "type": "response_item",
+             "payload": {"type": "message", "role": "assistant", "phase": "final",
+                         "content": [{"type": "output_text", "text": "Test added."}]}},
+        ]
+        with self.transcript.open("a", encoding="utf-8") as handle:
+            handle.write("".join(json.dumps(r) + chr(10) for r in second))
+        self.assertEqual(self.sync_with(self.cfg, requests), 1)  # user has now opted in
+        self.assertEqual([e["user_text"] for e in requests[0]["exchanges"]], ["Now add a test"])
 
     def test_ignores_incomplete_trailing_jsonl_record(self) -> None:
         with self.transcript.open("ab") as transcript:
