@@ -45,6 +45,11 @@ class RedactTests(unittest.TestCase):
         # key name preserved for context
         self.assertIn("db_password", redact("db_password = s3cretPass!"))
 
+    def test_real_values_near_those_placeholders_still_redacted(self):
+        self.assertNotIn("hunter2xyz", redact("secret=hunter2xyz"))
+        self.assertNotIn("correcthorse", redact("password = correcthorse"))
+        self.assertNotIn("S3cr3tPw", redact("postgres://user:S3cr3tPw@host/db"))
+
     def test_url_credentials(self):
         out = redact("postgres://admin:p4ssw0rd@db.internal:5432/app")
         self.assertNotIn("p4ssw0rd", out)
@@ -69,6 +74,10 @@ class RedactTests(unittest.TestCase):
             "def authenticate(token: str) -> bool:",
             "Authorization: Bearer <key> and X-Session-Id",
             "git config credential.https://github.com.username NAME",
+            "clean = redact(text, known_secrets=secrets)",
+            "token = token",
+            "postgres://user:pass@host/db",
+            "postgres://admin:password@localhost:5432/app",
             "git commit -m 'fix bug' && ls src/components",
         ]:
             with self.subTest(text=text):

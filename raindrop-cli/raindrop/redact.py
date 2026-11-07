@@ -110,6 +110,11 @@ def _kv_sub(m: re.Match[str]) -> str:
     val = m.group("qval") if m.group("qval") is not None else m.group("val")
     if not _looks_like_secret_value(val):
         return m.group(0)
+    # `known_secrets=secrets`, `token=token`: the value is a word from the name itself,
+    # i.e. a variable or placeholder, not a credential.
+    bare = val.lower().rstrip("s")
+    if bare and re.fullmatch(r"[a-z_]+", val.lower()) and bare in m.group("name").lower():
+        return m.group(0)
     q = m.group("q2") or ""
     return f"{m.group('prefix')}{q}{REDACTED}{q}"
 
@@ -122,7 +127,11 @@ def _auth_sub(m: re.Match[str]) -> str:
 
 def _format_sub(label: str):
     if label == "url-credentials":
-        return lambda m: f"{m.group(1)}:{REDACTED}"
+        # `user:pass@host` in docs/examples: obvious placeholder passwords are left alone.
+        placeholders = {"pass", "password", "passwd", "secret", "user", "xxx", "xxxx", "redacted"}
+        return lambda m: (
+            m.group(0) if m.group(2).lower() in placeholders else f"{m.group(1)}:{REDACTED}"
+        )
     return lambda m: f"[REDACTED:{label}]"
 
 
