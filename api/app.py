@@ -1,21 +1,147 @@
-"""raindrop API — single Lambda serving REST routes + the MCP endpoint.
+"""Raindrop API — single Lambda serving REST routes + the MCP endpoint.
 
 Run locally:   uvicorn app:app --port 8080
 MCP endpoint:  http://localhost:8080/mcp
+
+Public routes:  GET /health, POST /teams, POST /join
+Authed routes:  /mcp, POST /messages — require `Authorization: Bearer <key>`
 """
+import hashlib
+import json
+import os
+import re
+import secrets
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+
+import anyio
+import boto3
 from fastmcp import FastMCP
+from fastmcp.server.dependencies import get_http_request
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+# ---------- config ----------
+
+TEAMS_TABLE = os.environ.get("TEAMS_TABLE", "raindrop-teams")
+JOIN_CODES_TABLE = os.environ.get("JOIN_CODES_TABLE", "raindrop-join-codes")
+AGENTS_TABLE = os.environ.get("AGENTS_TABLE", "raindrop-agents")
+EXCHANGES_BUCKET = os.environ.get("EXCHANGES_BUCKET", "")
+
+JOIN_CODE_TTL_SECONDS = 48 * 3600
+JOIN_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/I
+AUTH_CACHE_TTL_SECONDS = 60
+PUBLIC_PATHS = {"/health", "/teams", "/join"}
+
+_ddb = boto3.resource("dynamodb")
+teams = _ddb.Table(TEAMS_TABLE)
+join_codes = _ddb.Table(JOIN_CODES_TABLE)
+agents = _ddb.Table(AGENTS_TABLE)
+_s3 = boto3.client("s3")
+
+
+# ---------- helpers ----------
+
+def sha256(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def new_join_code() -> str:
+    raw = "".join(secrets.choice(JOIN_CODE_ALPHABET) for _ in range(8))
+    return f"{raw[:4]}-{raw[4:]}"
+
+
+def normalize_code(code: str) -> str:
+    return code.upper().replace("-", "").replace(" ", "")
+
+
+def create_agent(team_id: str, display_name: str, focus: str) -> dict:
+    """Creates an agent and returns its plaintext key. The key is never stored."""
+    api_key = secrets.token_urlsafe(32)
+    agent_id = f"agt_{uuid.uuid4().hex[:12]}"
+    agents.put_item(Item={
+        "key_hash": sha256(api_key),
+        "agent_id": agent_id,
+        "team_id": team_id,
+        "display_name": display_name,
+        "focus": focus,
+        "status": "active",
+        "created_at": int(time.time()),
+    })
+    return {"agent_id": agent_id, "api_key": api_key}
+
+
+def error(status: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse({"error": code, "message": message}, status_code=status)
+
+
+# ---------- auth middleware (pure ASGI) ----------
+
+_auth_cache: dict[str, tuple[float, dict | None]] = {}
+
+
+def _lookup_agent(key_hash: str) -> dict | None:
+    hit = _auth_cache.get(key_hash)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    item = agents.get_item(Key={"key_hash": key_hash}).get("Item")
+    agent = item if item and item.get("status") == "active" else None
+    _auth_cache[key_hash] = (time.time() + AUTH_CACHE_TTL_SECONDS, agent)
+    return agent
+
+
+class AuthMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["path"] in PUBLIC_PATHS:
+            return await self.app(scope, receive, send)
+
+        headers = {k.lower(): v for k, v in scope.get("headers", [])}
+        auth = headers.get(b"authorization", b"").decode()
+        agent = None
+        if auth.lower().startswith("bearer "):
+            key = auth[7:].strip()
+            if key:
+                agent = await anyio.to_thread.run_sync(_lookup_agent, sha256(key))
+
+        if agent is None:
+            resp = error(401, "unauthorized",
+                         "Raindrop credentials rejected. Ask the developer to run `raindrop join`.")
+            return await resp(scope, receive, send)
+
+        scope.setdefault("state", {})["raindrop"] = {
+            "team_id": agent["team_id"],
+            "agent_id": agent["agent_id"],
+            "display_name": agent["display_name"],
+            "session_id": headers.get(b"x-session-id", b"").decode() or None,
+        }
+        return await self.app(scope, receive, send)
+
+
+def current_identity() -> dict:
+    """Use inside MCP tools: returns team_id, agent_id, display_name, session_id."""
+    return get_http_request().state.raindrop
+
+
+# ---------- MCP ----------
+
 mcp = FastMCP("raindrop")
 
-
-# ---------- MCP tools (search/list/etc. get added here by teammates) ----------
 
 @mcp.tool
 def ping() -> str:
     """Health check tool. Returns 'pong'."""
     return "pong"
+
+
+@mcp.tool
+def whoami() -> dict:
+    """Returns the team and agent this connection is authenticated as."""
+    return current_identity()
 
 
 # ---------- REST routes ----------
@@ -25,7 +151,160 @@ async def health(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
-# TODO next: POST /teams, POST /join, POST /messages
+@mcp.custom_route("/teams", methods=["POST"])
+async def create_team(request: Request) -> JSONResponse:
+    """Body: {name, display_name?, focus?}
+    Returns team_id + join_code. If display_name is given, the lead is auto-joined
+    and the response also includes agent_id + api_key (shown once)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return error(400, "bad_request", "Body must be JSON.")
+    name = (body.get("name") or "").strip()
+    if not name or len(name) > 80:
+        return error(400, "bad_request", "`name` is required (max 80 chars).")
+
+    def work():
+        now = int(time.time())
+        team_id = f"team_{uuid.uuid4().hex[:12]}"
+        code = new_join_code()
+        expires_at = now + JOIN_CODE_TTL_SECONDS
+        teams.put_item(Item={"team_id": team_id, "name": name, "created_at": now})
+        join_codes.put_item(Item={
+            "code_hash": sha256(normalize_code(code)),
+            "team_id": team_id,
+            "expires_at": expires_at,
+            "uses": 0,
+        })
+        result = {"team_id": team_id, "team_name": name,
+                  "join_code": code, "join_code_expires_at": expires_at}
+        display_name = (body.get("display_name") or "").strip()
+        if display_name:
+            result.update(create_agent(team_id, display_name, (body.get("focus") or "").strip()))
+        return result
+
+    return JSONResponse(await anyio.to_thread.run_sync(work), status_code=201)
+
+
+@mcp.custom_route("/join", methods=["POST"])
+async def join(request: Request) -> JSONResponse:
+    """Body: {code, display_name, focus?}. Returns team_id, agent_id, api_key (shown once)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return error(400, "bad_request", "Body must be JSON.")
+    code = normalize_code(body.get("code") or "")
+    display_name = (body.get("display_name") or "").strip()
+    if len(code) != 8 or not display_name or len(display_name) > 40:
+        return error(400, "bad_request", "`code` (8 chars) and `display_name` (max 40) are required.")
+
+    def work():
+        item = join_codes.get_item(Key={"code_hash": sha256(code)}).get("Item")
+        if not item:
+            return None, error(404, "invalid_code", "Join code not found.")
+        if int(item["expires_at"]) < time.time():
+            return None, error(410, "expired_code", "Join code has expired.")
+        join_codes.update_item(Key={"code_hash": sha256(code)},
+                               UpdateExpression="ADD uses :one",
+                               ExpressionAttributeValues={":one": 1})
+        team = teams.get_item(Key={"team_id": item["team_id"]}).get("Item") or {}
+        agent = create_agent(item["team_id"], display_name, (body.get("focus") or "").strip())
+        return {"team_id": item["team_id"], "team_name": team.get("name"), **agent}, None
+
+    result, err = await anyio.to_thread.run_sync(work)
+    return err or JSONResponse(result, status_code=201)
+
+
+MAX_EXCHANGES_PER_PUSH = 50
+MAX_PUSH_BYTES = 5_000_000
+_SAFE_SESSION = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def _validate_exchange(ex) -> str | None:
+    """Returns an error message, or None if the exchange matches ExchangeWire."""
+    if not isinstance(ex, dict):
+        return "each exchange must be an object"
+    sid = ex.get("session_id")
+    if not isinstance(sid, str) or not _SAFE_SESSION.match(sid) or ".." in sid:
+        return "session_id must be 1-128 chars of [A-Za-z0-9._:-]"
+    if not isinstance(ex.get("idx"), int) or isinstance(ex.get("idx"), bool) or ex["idx"] < 0:
+        return "idx must be a non-negative int"
+    if not isinstance(ex.get("ts"), int) or isinstance(ex.get("ts"), bool):
+        return "ts must be an int (epoch seconds)"
+    for f in ("user_text", "assistant_text"):
+        if not isinstance(ex.get(f), str):
+            return f"{f} must be a string"
+    for f in ("tool_summaries", "files_touched"):
+        v = ex.get(f, [])
+        if not isinstance(v, list) or not all(isinstance(s, str) for s in v):
+            return f"{f} must be a list of strings"
+    return None
+
+
+@mcp.custom_route("/messages", methods=["POST"])
+async def push_messages(request: Request) -> JSONResponse:
+    """Sync endpoint for the Stop hook. Body matches PushMessagesRequest:
+    {"exchanges": [ExchangeWire, ...]} (max 50). Returns {"accepted", "ids"}.
+    Writes one S3 object per exchange; the S3 event drives embedding.
+    Idempotent: the key is derived from session_id + idx, so retries overwrite."""
+    raw = await request.body()
+    if len(raw) > MAX_PUSH_BYTES:
+        return error(413, "too_large", f"Body exceeds {MAX_PUSH_BYTES} bytes; send smaller batches.")
+    try:
+        body = json.loads(raw)
+    except Exception:
+        return error(400, "bad_request", "Body must be JSON.")
+    exchanges = body.get("exchanges") if isinstance(body, dict) else None
+    if not isinstance(exchanges, list) or not exchanges:
+        return error(400, "bad_request", "`exchanges` must be a non-empty list.")
+    if len(exchanges) > MAX_EXCHANGES_PER_PUSH:
+        return error(400, "bad_request", f"Max {MAX_EXCHANGES_PER_PUSH} exchanges per request.")
+    for i, ex in enumerate(exchanges):
+        msg = _validate_exchange(ex)
+        if msg:
+            return error(400, "bad_request", f"exchanges[{i}]: {msg}")
+
+    ident = request.state.raindrop  # set by AuthMiddleware; never trust the body for identity
+    received_at = int(time.time())
+
+    def build(ex: dict) -> tuple[str, str, dict]:
+        ex_id = f"{ex['session_id']}:{ex['idx']}"  # recomputed server-side
+        key = (f"teams/{ident['team_id']}/agents/{ident['agent_id']}"
+               f"/sessions/{ex['session_id']}/{ex['idx']}.json")
+        doc = {
+            "id": ex_id,
+            "session_id": ex["session_id"],
+            "idx": ex["idx"],
+            "ts": ex["ts"],
+            "user_text": ex["user_text"],
+            "assistant_text": ex["assistant_text"],
+            "tool_summaries": ex.get("tool_summaries", []),
+            "files_touched": ex.get("files_touched", []),
+            "team_id": ident["team_id"],
+            "agent_id": ident["agent_id"],
+            "display_name": ident["display_name"],
+            "s3_key": key,
+            "received_at": received_at,
+        }
+        return ex_id, key, doc
+
+    items = [build(ex) for ex in exchanges]
+
+    def put(item):
+        _, key, doc = item
+        _s3.put_object(Bucket=EXCHANGES_BUCKET, Key=key,
+                       Body=json.dumps(doc).encode(), ContentType="application/json")
+
+    def write_all():
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            list(pool.map(put, items))  # raises if any put fails -> client retries the batch
+
+    try:
+        await anyio.to_thread.run_sync(write_all)
+    except Exception:
+        return error(500, "storage_failed", "Could not store exchanges; retry the same batch.")
+
+    return JSONResponse({"accepted": len(items), "ids": [i[0] for i in items]})
 
 
 # ---------- ASGI app ----------
@@ -34,5 +313,5 @@ app = mcp.http_app(
     path="/mcp",
     stateless_http=True,
     json_response=True,
-    # middleware=[Middleware(AuthMiddleware)],  # added in the auth step
+    middleware=[Middleware(AuthMiddleware)],
 )
