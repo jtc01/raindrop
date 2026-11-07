@@ -35,6 +35,14 @@ def main() -> None:
             dataType="float32",
             dimension=EMBED_DIMENSIONS,
             distanceMetric="cosine",  # must match vector_store.py's similarity = 1 - distance assumption
+            metadataConfiguration={
+                # preview/files_touched are the long, variable-length fields messages.py
+                # writes (free text, arbitrary-length path lists) and neither is ever
+                # used in a filter (only team_id is). Keeping them out of the filterable
+                # 2KB/vector budget avoids tripping it as either field grows. This is set
+                # once at index creation and can't be changed afterward.
+                "nonFilterableMetadataKeys": ["preview", "files_touched"],
+            },
         )
         print(f"created index {VECTOR_INDEX_NAME!r} (dim={EMBED_DIMENSIONS}, cosine) in bucket {VECTOR_BUCKET_NAME!r}")
     except _s3vectors.exceptions.ClientError as exc:
