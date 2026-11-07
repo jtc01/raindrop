@@ -75,6 +75,11 @@ class RedactTests(unittest.TestCase):
         once = redact('api_key="abcdefghijklmnop" and ghp_' + "a" * 36)
         self.assertEqual(redact(once), once)
 
+    def test_session_id_is_not_redacted(self):
+        sid = "019a1b2c-3d4e-7f80-9a1b-2c3d4e5f6a7b"
+        wire = {"id": f"{sid}:3", "session_id": sid, "idx": 3, "user_text": f"session_id: {sid}"}
+        self.assertEqual(redact_obj(wire), wire)
+
     def test_redact_obj(self):
         ex = {
             "prompt": "use sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123",

@@ -57,7 +57,7 @@ _FORMAT_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 _SECRET_NAME = (
     r"[A-Za-z0-9_.\-]*"
     r"(?:api[_\-]?key|apikey|secret|token|passwd|password|pwd|credential|private[_\-]?key|"
-    r"access[_\-]?key|auth|bearer|session[_\-]?id|cookie)"
+    r"access[_\-]?key|auth|bearer|cookie)"
     r"[A-Za-z0-9_.\-]*"
 )
 
