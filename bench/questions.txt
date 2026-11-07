@@ -1,0 +1,4 @@
+How does search_team_context rank results? What factors does it combine and with what weights?
+What kinds of secrets does Raindrop redact before uploading, and how does it avoid redacting ordinary code?
+How does the Kiro adapter capture conversations, given Kiro has no readable transcript file?
+How does raindrop sync --dry-run decide which session to preview when no hook payload is given?

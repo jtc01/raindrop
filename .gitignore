@@ -440,3 +440,5 @@ $RECYCLE.BIN/
 
 # User-specific stuff
 .
+bench/results/
+_to_delete/
