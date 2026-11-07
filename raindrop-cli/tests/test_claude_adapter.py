@@ -41,7 +41,7 @@ def tool(name, **inp):
 
 def session(tmp_path, content):
     p = tmp_path / "s.jsonl"
-    p.write_text(content)
+    p.write_bytes(content.encode())  # bytes, not write_text: Windows would turn \n into \r\n
     return ClaudeCodeAdapter().session_from_hook(
         {"session_id": "abc", "transcript_path": str(p)}
     ), p
@@ -63,7 +63,7 @@ def test_holds_back_unanswered_prompt(tmp_path):
     assert [e.user_text for e in res.exchanges] == ["one"]
     assert res.new_cursor == len(first.encode())
     # reply arrives; next run picks up "two" with a stable idx
-    p.write_text(first + user("two") + asst(text("a2")))
+    p.write_bytes((first + user("two") + asst(text("a2"))).encode())
     res2 = ClaudeCodeAdapter().read_new(ref, res.new_cursor)
     assert [(e.idx, e.user_text) for e in res2.exchanges] == [(1, "two")]
     assert ClaudeCodeAdapter().read_new(ref, res2.new_cursor).exchanges == []
