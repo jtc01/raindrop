@@ -4,9 +4,21 @@ Run by the tool's Stop hook (hook JSON on stdin). Works for any adapter in
 raindrop/adapters/registry.py; the hook passes `--tool <name>`.
 
 Cursor handling: one file per session at ~/.raindrop/cursors/<tool>/<session_id>
-holding the adapter's opaque cursor. It only advances after the API confirms
-every batch, so a failed push is retried next turn. Exchange ids are
+holding the adapter's opaque cursor. It only advances past exchanges that are
+either confirmed stored (in the server's `ids`) or permanently given up on
+(see below), so a failed push is retried next turn. Exchange ids are
 deterministic, so a resend overwrites rather than duplicates.
+
+Per-exchange failure tracking: push_messages can accept fewer exchanges than
+were sent (e.g. one exchange's embedding keeps failing) while still returning
+200. Comparing `accepted` to the batch size only tells you *that* something
+was rejected, not *which* exchange -- and retrying the same batch forever
+means one permanently-bad exchange blocks every later exchange in the session
+too. So failures are tracked per exchange id (alongside the cursor, at
+~/.raindrop/cursors/<tool>/<session_id>.state.json) using the `ids` the server
+already returns. An exchange still missing from `ids` after
+MAX_EXCHANGE_FAILURES attempts is logged and skipped for good; everything
+else keeps retrying normally.
 """
 from __future__ import annotations
 
@@ -29,6 +41,13 @@ from raindrop.errors import NotJoinedError, RaindropError
 
 SAFE_SESSION_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
+# Give up on a single exchange after this many push attempts where the server's
+# `ids` still doesn't include it, rather than letting it block the session's
+# sync forever. Comfortably more than enough retries to ride out a transient
+# failure (throttling, a brief S3 Vectors blip) without papering over a
+# systemic outage affecting every exchange.
+MAX_EXCHANGE_FAILURES = 5
+
 
 def _cursor_path(tool: str, session_id: str) -> Path:
     if not SAFE_SESSION_ID.fullmatch(session_id) or ".." in session_id:
@@ -50,6 +69,31 @@ def _save_cursor(path: Path, cursor: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(str(cursor))
+    tmp.replace(path)
+
+
+def _state_path(cursor_file: Path) -> Path:
+    return cursor_file.parent / (cursor_file.name + ".state.json")
+
+
+def _load_state(cursor_file: Path) -> tuple[dict[str, int], set[str]]:
+    """{exchange_id: consecutive push failures} and the set of exchange ids
+    given up on for good."""
+    try:
+        data = json.loads(_state_path(cursor_file).read_text())
+        return dict(data.get("failures", {})), set(data.get("skipped", []))
+    except (FileNotFoundError, ValueError):
+        return {}, set()
+
+
+def _save_state(cursor_file: Path, failures: dict[str, int], skipped: set[str]) -> None:
+    path = _state_path(cursor_file)
+    if not failures and not skipped:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps({"failures": failures, "skipped": sorted(skipped)}))
     tmp.replace(path)
 
 
@@ -78,17 +122,45 @@ def run_sync(payload: dict, tool: str, transport: httpx.BaseTransport | None = N
     secrets = [cfg["api_key"]]
     if session.cwd:
         secrets += load_env_secrets(Path(session.cwd))
-    wire = [redact_obj(e.to_wire(), known_secrets=secrets) for e in result.exchanges]
+    wire_all = [redact_obj(e.to_wire(), known_secrets=secrets) for e in result.exchanges]
 
+    failures, skipped = _load_state(cursor_file)
+
+    # Exchanges already given up on are never resent, but they're still
+    # "dealt with" as far as this read is concerned, so the cursor can still
+    # advance past them.
+    wire = [ex for ex in wire_all if ex["id"] not in skipped]
+    if len(wire) != len(wire_all):
+        _log_failure(f"{tool}: excluding {len(wire_all) - len(wire)} previously abandoned exchange(s).")
+
+    blocked = False
     for i in range(0, len(wire), BATCH_SIZE):
         batch = wire[i : i + BATCH_SIZE]
         resp = api_client._post(
             cfg["api_url"], "/messages", {"exchanges": batch},
             api_key=cfg["api_key"], transport=transport,
         )
-        if resp.get("accepted") != len(batch):
-            raise RaindropError("API did not confirm the full batch was stored.")
+        accepted_ids = set(resp.get("ids", []))
+        for ex in batch:
+            if ex["id"] in accepted_ids:
+                failures.pop(ex["id"], None)
+                continue
+            count = failures.get(ex["id"], 0) + 1
+            if count >= MAX_EXCHANGE_FAILURES:
+                _log_failure(
+                    f"{tool}: giving up on exchange {ex['id']} after {count} failed push "
+                    "attempts; skipping it so the rest of this session isn't stuck forever."
+                )
+                failures.pop(ex["id"], None)
+                skipped.add(ex["id"])
+            else:
+                failures[ex["id"]] = count
+                blocked = True
 
+    _save_state(cursor_file, failures, skipped)
+
+    if blocked:
+        raise RaindropError("API did not confirm the full batch was stored.")
     if result.new_cursor != cursor:
         _save_cursor(cursor_file, result.new_cursor)
     return len(wire)
