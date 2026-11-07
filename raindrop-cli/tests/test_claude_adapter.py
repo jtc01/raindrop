@@ -43,7 +43,7 @@ def session(tmp_path, content):
     p = tmp_path / "s.jsonl"
     p.write_bytes(content.encode())  # bytes, not write_text: Windows would turn \n into \r\n
     return ClaudeCodeAdapter().session_from_hook(
-        {"session_id": "abc", "transcript_path": str(p)}
+        {"session_id": "abc", "transcript_path": str(p), "cwd": str(tmp_path)}
     ), p
 
 

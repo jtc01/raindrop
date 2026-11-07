@@ -15,10 +15,10 @@ import shlex
 import shutil
 import subprocess
 import time
-from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
+from typing import Any, Callable, Iterable
 
-from raindrop import constants
+from raindrop import config, constants
 from raindrop.adapters.base import Change, SessionRef
 from raindrop.errors import ConfigParseError, InstallError, TranscriptError
 
@@ -201,6 +201,99 @@ def summarize_tool(name: object, args: object) -> tuple[str, list[str]]:
         if isinstance(args.get(key), str):
             return f"{name}: {clip(args[key])}", []
     return name, []
+
+
+# ---------------------------------------------------------------------------
+# files_touched normalization
+# ---------------------------------------------------------------------------
+#
+# Tools report paths however they like: absolute, relative to their cwd, with
+# `\` on Windows, sometimes pointing at their own internals (~/.claude/...).
+# Every adapter funnels its paths through here so that what we upload is one
+# shape: relative to the session's git repo root, `/`-separated, deduped,
+# first-seen order. Anything outside the repo is dropped. The comparison is
+# lexical (no filesystem access) so it behaves the same on every OS and can be
+# tested with foreign paths.
+
+
+def _flavor(windows: bool) -> type[PurePath]:
+    return PureWindowsPath if windows else PurePosixPath
+
+
+def _lexical_normalize(path: PurePath) -> PurePath:
+    """Collapse `.` and `..` without touching the filesystem. A `..` that would
+    climb above the anchor is kept, which makes the path fall outside any root."""
+    parts: list[str] = []
+    for part in path.parts[1:] if path.anchor else path.parts:
+        if part == ".":
+            continue
+        if part == ".." and parts and parts[-1] != "..":
+            parts.pop()
+        else:
+            parts.append(part)
+    return type(path)(path.anchor, *parts) if path.anchor else type(path)(*parts)
+
+
+def normalize_files_touched(
+    paths: Iterable[object],
+    repo_root: str | PurePath,
+    cwd: str | PurePath | None = None,
+    *,
+    windows: bool | None = None,
+    home: str | PurePath | None = None,
+) -> list[str]:
+    """Paths relative to `repo_root`, POSIX separators, deduped, first-seen order.
+
+    Relative input paths are taken relative to `cwd` (default: the repo root).
+    `~` is expanded against `home`. Paths outside the repo are dropped, so a
+    tool's own files (~/.claude/..., ~/.codex/...) never end up in an exchange.
+    On Windows the match ignores case and accepts either slash.
+
+    `windows` picks the path rules (default: the current OS) so tests can feed
+    Windows paths on Mac and vice versa.
+    """
+    if windows is None:
+        windows = is_windows()
+    P = _flavor(windows)
+    root = _lexical_normalize(P(str(repo_root)))
+    base = _lexical_normalize(P(str(cwd))) if cwd else root
+    home_s = str(home) if home is not None else str(Path.home())
+
+    out: list[str] = []
+    for raw in paths:
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        s = raw.strip()
+        if s == "~" or s[:2] in ("~/", "~\\"):
+            s = home_s + s[1:]
+        p = P(s)
+        if p.root and not p.drive and root.drive:
+            # `\Users\x` on Windows: rooted but drive-less, so it lives on the
+            # repo's drive.
+            p = P(root.drive + str(p))
+        if not p.is_absolute():
+            p = base / p
+        p = _lexical_normalize(p)
+        try:
+            rel = p.relative_to(root)
+        except ValueError:
+            continue
+        name = rel.as_posix()
+        if name in (".", "") or name in out:
+            continue
+        out.append(name)
+    return out
+
+
+def repo_relative_files(paths: Iterable[object], session: SessionRef) -> list[str]:
+    """normalize_files_touched() for a live session: repo root from the
+    session's cwd (falling back to the process cwd), real OS path rules."""
+    cwd = Path(session.cwd) if session.cwd else Path.cwd()
+    try:
+        cwd = cwd.resolve()
+    except OSError:
+        pass
+    return normalize_files_touched(paths, config.repo_root(cwd), cwd)
 
 
 # ---------------------------------------------------------------------------

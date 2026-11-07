@@ -45,6 +45,7 @@ from raindrop.adapters._common import (
     quote_cmd,
     load_json_text,
     summarize_tool,
+    repo_relative_files,
 )
 from raindrop.adapters.base import Adapter, Change, SessionRef
 from raindrop.errors import TranscriptError
@@ -326,7 +327,7 @@ class KiroAdapter(Adapter):
                         user_text=draft.user_text,
                         assistant_text=text.strip(),
                         tool_summaries=draft.tools,
-                        files_touched=draft.files,
+                        files_touched=repo_relative_files(draft.files, session),
                     )))
                 draft = None
 

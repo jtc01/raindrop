@@ -10,12 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from raindrop.adapters._common import (
-    json_change,
-    jsonl_head,
-    newest_session_in_repo,
-    validate_session_id,
-)
+from raindrop.adapters._common import json_change, repo_relative_files, validate_session_id
 from raindrop.adapters.base import Adapter, Change, SessionRef
 from raindrop.errors import TranscriptError
 from raindrop.models import Cursor, Exchange, ReadResult, ToolRecord
@@ -97,7 +92,8 @@ def _epoch(value: object) -> int:
     return int(time.time())
 
 
-def _path_arguments(arguments: object, cwd: Path) -> list[str]:
+def _path_arguments(arguments: object) -> list[str]:
+    """Raw path strings from a tool call. Made repo-relative in _Draft.finish."""
     if isinstance(arguments, str):
         try:
             arguments = json.loads(arguments)
@@ -108,19 +104,8 @@ def _path_arguments(arguments: object, cwd: Path) -> list[str]:
     paths: list[str] = []
     for key in ("file_path", "path", "filename", "notebook_path"):
         value = arguments.get(key)
-        if not isinstance(value, str) or not value:
-            continue
-        candidate = Path(value)
-        if candidate.is_absolute():
-            try:
-                candidate = candidate.resolve().relative_to(cwd.resolve())
-            except (OSError, ValueError):
-                continue
-        if ".." in candidate.parts:
-            continue
-        name = candidate.as_posix()
-        if name not in paths:
-            paths.append(name)
+        if isinstance(value, str) and value and value not in paths:
+            paths.append(value)
     return paths
 
 
@@ -134,18 +119,18 @@ class _Draft:
         self.tools: list[str] = []
         self.files: list[str] = []
 
-    def finish(self, session_id: str, idx: int) -> Exchange | None:
+    def finish(self, session: SessionRef, idx: int) -> Exchange | None:
         answer = "\n\n".join(self.after_tool or self.assistant_parts).strip()
         if not self.user_text or not answer:
             return None
         return Exchange(
-            session_id=session_id,
+            session_id=session.session_id,
             idx=idx,
             ts=self.ts,
             user_text=self.user_text,
             assistant_text=answer,
             tool_summaries=self.tools,
-            files_touched=self.files,
+            files_touched=repo_relative_files(self.files, session),
         )
 
 
@@ -285,7 +270,7 @@ class CodexAdapter(Adapter):
                             name = item.get("name")
                             if isinstance(name, str) and name:
                                 drafts[-1].tools.append(name)
-                            paths = _path_arguments(item.get("input") or item.get("arguments"), Path(session.cwd or Path.cwd()))
+                            paths = _path_arguments(item.get("input") or item.get("arguments"))
                             for file_path in paths:
                                 if file_path not in drafts[-1].files:
                                     drafts[-1].files.append(file_path)
@@ -300,16 +285,13 @@ class CodexAdapter(Adapter):
                     name = payload.get("name")
                     if isinstance(name, str) and name:
                         drafts[-1].tools.append(name)
-                    paths = _path_arguments(
-                        payload.get("arguments"),
-                        Path(session.cwd or Path.cwd()),
-                    )
+                    paths = _path_arguments(payload.get("arguments"))
                     for file_path in paths:
                         if file_path not in drafts[-1].files:
                             drafts[-1].files.append(file_path)
                     drafts[-1].after_tool = []
 
-        finalized = [draft.finish(session.session_id, idx) for idx, draft in enumerate(drafts)]
+        finalized = [draft.finish(session, idx) for idx, draft in enumerate(drafts)]
         held_start = next(
             (draft.start for draft, exchange in zip(drafts, finalized) if exchange is None),
             None,
