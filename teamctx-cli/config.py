@@ -53,10 +53,34 @@ def permissions_ok() -> bool | None:
         return False
 
 
+# ---------- sharing pause (checked by sync) ----------
+
+def repo_root(path: str | os.PathLike | None = None) -> Path:
+    """The git repo containing `path` (default: cwd), or the path itself if not in a repo."""
+    start = Path(path or Path.cwd()).resolve()
+    for p in (start, *start.parents):
+        if (p / ".git").exists():
+            return p
+    return start
+
+
+def sharing_paused(path: str | os.PathLike | None = None, cfg: dict | None = None) -> bool:
+    """True if sharing is paused globally or for the repo containing `path`.
+    Sync should call this with the session's working directory and, when it returns
+    True, advance the cursor WITHOUT uploading, so paused content is never shared later."""
+    cfg = cfg if cfg is not None else (load() or {})
+    sharing = cfg.get("sharing", {})
+    if sharing.get("paused"):
+        return True
+    return str(repo_root(path)) in sharing.get("paused_repos", [])
+
+
 def build(api_url: str, resp: dict, display_name: str, focus: str, existing: dict | None) -> dict:
     """Turns a /teams or /join response into a config. Keeps installed tools
     only if rejoining the same team."""
-    tools = existing.get("tools", {}) if existing and existing.get("team_id") == resp["team_id"] else {}
+    same_team = existing and existing.get("team_id") == resp["team_id"]
+    tools = existing.get("tools", {}) if same_team else {}
+    sharing = existing.get("sharing", {}) if existing else {}  # pause settings survive rejoining
     return {
         "api_url": api_url.rstrip("/"),
         "api_key": resp["api_key"],
@@ -66,4 +90,5 @@ def build(api_url: str, resp: dict, display_name: str, focus: str, existing: dic
         "display_name": display_name,
         "focus": focus,
         "tools": tools,
+        "sharing": sharing,
     }

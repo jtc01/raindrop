@@ -79,6 +79,22 @@ def leave(api_url: str, api_key: str, **kw) -> dict:
     return _post(api_url, "/leave", {}, api_key=api_key, **kw)
 
 
+def remove(api_url: str, api_key: str, agent_id: str, **kw) -> dict:
+    """POST /remove (authed, lead only). Revokes a teammate's keys."""
+    return _post(api_url, "/remove", {"agent_id": agent_id}, api_key=api_key, **kw)
+
+
+def list_codes(api_url: str, api_key: str, **kw) -> dict:
+    """GET /codes (authed). Active join codes for your team."""
+    return _get(api_url, "/codes", api_key=api_key, **kw)
+
+
+def revoke_code(api_url: str, api_key: str, code: str | None = None, code_id: str | None = None, **kw) -> dict:
+    """POST /codes/revoke (authed). Pass the full code or its short id."""
+    body = {"code": code} if code else {"id": code_id}
+    return _post(api_url, "/codes/revoke", body, api_key=api_key, **kw)
+
+
 def join(api_url: str, code: str, display_name: str, focus: str, **kw) -> dict:
     """POST /join. Returns team_id, team_name, agent_id, api_key (shown once)."""
     return _post(api_url, "/join", {"code": code, "display_name": display_name, "focus": focus}, **kw)
