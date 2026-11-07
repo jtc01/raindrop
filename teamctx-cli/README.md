@@ -1,8 +1,7 @@
 # teamctx secret redaction
 
-`redact.py` scrubs secrets (API keys, tokens, passwords) from text **locally**, before anything is
-uploaded to the cloud. It is meant to run inside `teamctx sync` (the Stop-hook auto-sync), right
-before the POST to `push_messages`.
+`redact.py` scrubs secrets (API keys, tokens, passwords) from text **locally**, so they can be
+removed before data is uploaded to the cloud.
 
 Pure Python standard library, no dependencies.
 
@@ -44,19 +43,6 @@ clean = redact(text, known_secrets=known)
 # the original is not modified.
 clean_exchange = redact_obj(exchange, known_secrets=known)
 ```
-
-### In `teamctx sync`
-
-Call it after parsing the transcript into exchanges and **before** the POST to `push_messages`:
-
-```python
-exchanges = parse_exchanges(new_content)          # adapter's parser
-known = [cfg["key"]] + load_env_secrets(project_root)
-exchanges = [redact_obj(e, known_secrets=known) for e in exchanges]
-push_messages(exchanges)                          # only now does data leave the machine
-```
-
-Redaction only affects what is uploaded; the local transcript is never modified.
 
 ### API
 
