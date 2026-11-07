@@ -45,6 +45,11 @@ class RedactTests(unittest.TestCase):
         # key name preserved for context
         self.assertIn("db_password", redact("db_password = s3cretPass!"))
 
+    def test_real_values_near_those_placeholders_still_redacted(self):
+        self.assertNotIn("hunter2xyz", redact("secret=hunter2xyz"))
+        self.assertNotIn("correcthorse", redact("password = correcthorse"))
+        self.assertNotIn("S3cr3tPw", redact("postgres://user:S3cr3tPw@host/db"))
+
     def test_url_credentials(self):
         out = redact("postgres://admin:p4ssw0rd@db.internal:5432/app")
         self.assertNotIn("p4ssw0rd", out)
@@ -69,6 +74,10 @@ class RedactTests(unittest.TestCase):
             "def authenticate(token: str) -> bool:",
             "Authorization: Bearer <key> and X-Session-Id",
             "git config credential.https://github.com.username NAME",
+            "clean = redact(text, known_secrets=secrets)",
+            "token = token",
+            "postgres://user:pass@host/db",
+            "postgres://admin:password@localhost:5432/app",
             "git commit -m 'fix bug' && ls src/components",
         ]:
             with self.subTest(text=text):
@@ -114,6 +123,37 @@ class EntropyAndEnvTests(unittest.TestCase):
         ]:
             with self.subTest(text=text):
                 self.assertEqual(redact(text), text)
+
+    BLOB = __import__("base64").urlsafe_b64encode(__import__("hashlib").sha512(b"x").digest()).decode().rstrip("=")
+
+    def test_random_blob_is_redacted_but_benign_shapes_are_not(self):
+        b = self.BLOB
+        self.assertIn("high-entropy", redact(f"token-ish {b} end"))  # control
+        for text in [
+            "id 019a1b2c-3d4e-7f80-9a1b-2c3d4e5f6a7b done",
+            f'"integrity": "sha512-{b}=="',
+            f"![img](data:image/png;base64,{b})",
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(redact(text), text)
+
+    def test_entropy_log_is_opt_in_and_never_contains_the_string(self):
+        import os, tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "redact.log"
+            with mock.patch.dict(os.environ, {"RAINDROP_HOME": d}, clear=False):
+                os.environ.pop("RAINDROP_REDACT_LOG", None)
+                redact(f"x {self.BLOB} y")
+                self.assertFalse(log.exists())  # off by default
+                os.environ["RAINDROP_REDACT_LOG"] = "1"
+                redact(f"x {self.BLOB} y")
+            text = log.read_text(encoding="utf-8")
+            self.assertIn("high-entropy", text)
+            self.assertIn(f"len={len(self.BLOB)}", text)
+            self.assertNotIn(self.BLOB[:12], text)
 
     def test_load_env_secrets(self):
         import tempfile

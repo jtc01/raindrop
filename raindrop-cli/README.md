@@ -23,7 +23,10 @@ Design notes:
 - The key *name* is kept (`db_password = [REDACTED]`) so the redacted text stays readable.
 - Code is left alone: `token = get_token()`, `password: str`, `api_key = os.environ['X']`,
   `${API_KEY}` are not redacted.
-- Git SHAs, other hex digests, file paths, and long identifiers are not treated as high-entropy secrets.
+- Git SHAs, other hex digests, UUIDs, package-lock `sha512-...` integrity hashes, `data:...;base64,` payloads,
+  file paths, and long identifiers are not treated as high-entropy secrets.
+- To see what the entropy layer is catching, set `RAINDROP_REDACT_LOG=1`. Each hit appends one line
+  (length, entropy, character classes; never the string itself) to `~/.raindrop/redact.log`. Off by default.
 - Redacting already-redacted text changes nothing (idempotent).
 - Known values shorter than 8 characters are ignored, so short strings can't shred normal text.
 

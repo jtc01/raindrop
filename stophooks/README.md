@@ -6,6 +6,10 @@ Cursor provide different hook payloads and have different behavior:
 - `claude-code-stop-hook/claude_stop_sync.py` syncs finished Claude Code turns
   through the CLI's sync pipeline (redaction included). `raindrop tools add
   claude-code` can also install a hook for you; see that folder's README.
+- `kiro-stop-hook/kiro_stop_sync.py` records Kiro hook events and uploads each
+  finished turn through the CLI's sync pipeline (redaction included). It always
+  exits 0 so it can never block Kiro. `raindrop tools add kiro` can also install
+  the hooks for you; see that folder's README.
 - `codex-stop-hook/stop_sync.py` reads Codex transcript data, redacts it, and
   uploads completed exchanges to Raindrop.
 - `cursor-stop-hook/capture.py` currently records only the structure of

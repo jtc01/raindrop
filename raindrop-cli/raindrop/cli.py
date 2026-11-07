@@ -9,7 +9,8 @@
   raindrop leave         # revoke your key and remove local config
   raindrop remove Dante  # (lead) remove a teammate
   raindrop codes         # list join codes; `codes revoke <code>` cancels one
-  raindrop pause [--repo] / resume [--repo]   # stop/start sharing context
+  raindrop share [--repo] / unshare [--repo]  # opt this repo (or everything) in/out of sharing
+  raindrop pause [--repo] / resume [--repo]   # temporarily stop/start sharing context
   raindrop whoami
 
 Other owners add their commands (sync, tools add, proxy) to `app` below.
@@ -232,6 +233,53 @@ def codes_revoke(code: str = typer.Argument(..., help="The join code (AWB3-V69V)
     typer.secho(f"Revoked join code {resp['revoked']}.", fg="green")
 
 
+@app.command("share")
+def share(repo: bool = typer.Option(False, "--repo", help="Share only the git repo you're in.")):
+    """Opt in to sharing agent context: this repo (--repo), or every repo on this machine."""
+    cfg = _require_config()
+    sharing = cfg.setdefault("sharing", {})
+    sharing.setdefault("mode", config.DEFAULT_SHARING_MODE)
+    if repo:
+        root = str(config.repo_root())
+        repos = sharing.setdefault("shared_repos", [])
+        if root not in repos:
+            repos.append(root)
+        msg = f"Sharing on for {root}."
+        if sharing["mode"] == "all":
+            msg += " (Mode is 'all', so every repo is shared anyway.)"
+    else:
+        sharing["mode"] = "all"
+        msg = "Sharing on for every repo on this machine."
+    config.save(cfg)
+    typer.secho(msg, fg="green")
+    if sharing.get("paused"):
+        typer.secho("Sharing is still paused everywhere; run `raindrop resume` to start uploading.", fg="yellow")
+    elif repo and config.sharing_paused(cfg=cfg):
+        typer.secho("This repo is still paused; run `raindrop resume --repo` here to start uploading.", fg="yellow")
+
+
+@app.command("unshare")
+def unshare(repo: bool = typer.Option(False, "--repo", help="Stop sharing only the git repo you're in.")):
+    """Opt out of sharing: remove this repo (--repo), or switch to opt-in so only shared repos upload."""
+    cfg = _require_config()
+    sharing = cfg.setdefault("sharing", {})
+    sharing.setdefault("mode", config.DEFAULT_SHARING_MODE)
+    if repo:
+        root = str(config.repo_root())
+        sharing["shared_repos"] = [r for r in sharing.get("shared_repos", []) if r != root]
+        msg = f"Sharing off for {root}."
+        if sharing["mode"] == "all":
+            msg += (" Mode is 'all', so this repo is still shared; run `raindrop unshare` "
+                    "to switch to opt-in, or `raindrop pause --repo` to block just this repo.")
+    else:
+        sharing["mode"] = config.DEFAULT_SHARING_MODE
+        n = len(sharing.get("shared_repos", []))
+        msg = f"Sharing is now opt-in: only the {n} repo(s) added with `raindrop share --repo` upload."
+    config.save(cfg)
+    typer.secho(msg, fg="yellow")
+    typer.echo("Conversations in unshared repos are skipped, not queued: they won't upload if you share later.")
+
+
 @app.command("pause")
 def pause(repo: bool = typer.Option(False, "--repo", help="Pause only the git repo you're in.")):
     """Stop sharing your agent context with the team (everywhere, or for one repo)."""
@@ -308,10 +356,10 @@ def doctor():
             typer.echo(f"  -  {label}")
             return
         ok_all &= ok
-        mark = typer.style("✓", fg="green") if ok else typer.style("✗", fg="red")
+        mark = typer.style("[ok]", fg="green") if ok else typer.style("[x]", fg="red")
         typer.echo(f"  {mark}  {label}")
         if not ok and fix:
-            typer.echo(f"       → {fix}")
+            typer.echo(f"       -> {fix}")
 
     import shutil
     import sys
@@ -351,6 +399,10 @@ def doctor():
                    "`raindrop join <code> --name <name> --force`." if e.status == 401 else e.message)
 
     report(None, f"Sharing: {_sharing_summary(cfg)}")
+    if (config.sharing_mode(cfg) == "opt_in" and not config.sharing_paused(cfg=cfg)
+            and not config.should_share(cfg=cfg)):
+        typer.secho(f"       ! This repo ({config.repo_root()}) isn't shared. Run `raindrop share --repo` "
+                    "here to share it, or `raindrop share` to share every repo.", fg="yellow")
 
     tools = cfg.get("tools", {})
     report(bool(tools), f"Tools installed: {', '.join(tools) or 'none'}",
@@ -363,7 +415,7 @@ def doctor():
     if ok_all:
         typer.secho("Everything looks good.", fg="green")
     else:
-        typer.secho("Some checks failed. Fix the items marked ✗ above.", fg="yellow")
+        typer.secho("Some checks failed. Fix the items marked [x] above.", fg="yellow")
         raise typer.Exit(1)
 
 
@@ -382,12 +434,24 @@ def whoami():
 
 
 def _sharing_summary(cfg: dict) -> str:
+    """One line for whoami/doctor: mode, counts, and what applies to the current repo."""
     sharing = cfg.get("sharing", {})
     if sharing.get("paused"):
         return "paused everywhere"
-    repos = sharing.get("paused_repos", [])
-    here = " (including this repo)" if config.sharing_paused(cfg=cfg) else ""
-    return f"on, paused for {len(repos)} repo(s){here}" if repos else "on"
+    if config.sharing_mode(cfg) == "all":
+        base = "all repos"
+    else:
+        base = f"opt-in, {len(sharing.get('shared_repos', []))} repo(s) shared"
+    paused_repos = sharing.get("paused_repos", [])
+    if paused_repos:
+        base += f", paused for {len(paused_repos)} repo(s)"
+    if config.sharing_paused(cfg=cfg):
+        here = "this repo is paused"
+    elif config.should_share(cfg=cfg):
+        here = "this repo is shared"
+    else:
+        here = "this repo is NOT shared"
+    return f"{base} ({here})"
 
 
 if __name__ == "__main__":

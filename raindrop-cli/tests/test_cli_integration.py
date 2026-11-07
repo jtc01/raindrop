@@ -24,7 +24,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / ".raindrop" / "config.json")
     (tmp_path / ".claude").mkdir()
     config.save({"api_url": "https://api.test", "api_key": KEY, "agent_id": "a",
-                 "team_id": "t", "display_name": "D", "focus": "", "tools": {}})
+                 "team_id": "t", "display_name": "D", "focus": "", "tools": {},
+                 "sharing": {"mode": "all"}})
     return tmp_path
 
 
@@ -46,7 +47,7 @@ def test_tools_add_dry_run_then_add_then_remove(env):
 
     r = runner.invoke(cli.app, ["tools", "add", "claude-code", "--yes", "--rules"])
     assert r.exit_code == 0, r.output
-    assert "Claude Code ✓ MCP + auto-sync hook + rules" in r.output
+    assert "Claude Code [ok] MCP + auto-sync hook + rules" in r.output
     cfg = config.load()
     assert cfg["tools"]["claude-code"]["hook"] is True
     assert cfg["tools"]["claude-code"]["extra"]["mcp_method"] == "file"
