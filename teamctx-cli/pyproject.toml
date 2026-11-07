@@ -13,7 +13,7 @@ dependencies = ["typer", "httpx"]
 raindrop = "cli:app"
 
 [tool.setuptools]
-py-modules = ["cli", "api_client", "config", "redact"]
+py-modules = ["cli", "api_client", "config", "redact", "sync_cmd", "tools_cmd"]
 
 [tool.setuptools.packages.find]
 include = ["teamctx*"]

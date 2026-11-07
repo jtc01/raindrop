@@ -4,7 +4,7 @@ Paths and fixed strings used across teamctx.
 
 Paths are functions, not module-level constants, so they are computed when
 called. That way tests can point HOME at a temp directory and nothing touches
-the real ~/.teamctx or ~/.claude.
+the real ~/.raindrop or ~/.claude.
 """
 
 from __future__ import annotations
@@ -58,16 +58,16 @@ def claude_json_path() -> Path:
 # Fixed strings
 # ---------------------------------------------------------------------------
 
-MCP_SERVER_NAME = "teamctx"
+MCP_SERVER_NAME = "raindrop"
 
 # Substring used to find our own hook entries so re-running install replaces
 # them instead of adding duplicates.
-HOOK_MARKER = "teamctx sync"
+HOOK_MARKER = "raindrop sync"
 
 # Delimiters for the block we add to CLAUDE.md, so it can be updated or removed
 # without touching the user's own content.
-RULES_START = "<!-- teamctx:start -->"
-RULES_END = "<!-- teamctx:end -->"
+RULES_START = "<!-- raindrop:start -->"
+RULES_END = "<!-- raindrop:end -->"
 
 # Max exchanges per push_messages request.
 BATCH_SIZE = 50
