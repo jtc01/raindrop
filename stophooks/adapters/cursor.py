@@ -127,7 +127,7 @@ class CursorAdapter(Adapter):
 
     def session_from_hook(self, payload: dict) -> SessionRef:
         session_id = validate_session_id(payload.get("conversation_id"), self.display_name)
-        self.capture(payload)
+        # run_sync() calls capture() itself; capturing here too would spool every event twice.
         cwd = payload.get("workspace_roots") or payload.get("cwd")
         if isinstance(cwd, list):
             cwd = cwd[0] if cwd and isinstance(cwd[0], str) else None
