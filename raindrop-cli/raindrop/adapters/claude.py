@@ -38,6 +38,7 @@ from raindrop.adapters._common import (
     strip_rules_block,
     load_json_text,
     summarize_tool,
+    repo_relative_files,
 )
 from raindrop.adapters.base import Adapter, Change, InstallStatus, SessionRef
 from raindrop.errors import InstallError, TranscriptError
@@ -186,15 +187,15 @@ class _Draft:
         parts = self.texts_after_tool or self.all_texts
         return "\n\n".join(parts)
 
-    def finish(self, session_id: str, idx: int) -> Exchange:
+    def finish(self, session: SessionRef, idx: int) -> Exchange:
         return Exchange(
-            session_id=session_id,
+            session_id=session.session_id,
             idx=idx,
             ts=self.ts,
             user_text=self.user_text,
             assistant_text=self.assistant_text,
             tool_summaries=self.tool_summaries,
-            files_touched=self.files,
+            files_touched=repo_relative_files(self.files, session),
         )
 
 
@@ -371,7 +372,7 @@ class ClaudeCodeAdapter(Adapter):
             held = len(drafts)
 
         exchanges = [
-            d.finish(session.session_id, i)
+            d.finish(session, i)
             for i, d in enumerate(drafts[:held])
             if d.start >= cursor and d.assistant_text
         ]

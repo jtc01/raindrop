@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from raindrop.adapters._common import json_change, validate_session_id
+from raindrop.adapters._common import json_change, repo_relative_files, validate_session_id
 from raindrop.adapters.base import Adapter, Change, SessionRef
 from raindrop.errors import TranscriptError
 from raindrop.models import Cursor, Exchange, ReadResult, ToolRecord
@@ -69,25 +69,16 @@ def _timestamp(value: object) -> int:
     return int(time.time())
 
 
-def _paths(value: Any, cwd: Path) -> list[str]:
+def _paths(value: Any) -> list[str]:
+    """Raw path strings from a tool call, spooled as-is. read_new() makes them
+    repo-relative (see _common.repo_relative_files)."""
     if not isinstance(value, dict):
         return []
     result: list[str] = []
     for key in ("file_path", "path", "filename", "notebook_path"):
         item = value.get(key)
-        if not isinstance(item, str) or not item:
-            continue
-        candidate = Path(item)
-        if candidate.is_absolute():
-            try:
-                candidate = candidate.resolve().relative_to(cwd.resolve())
-            except (OSError, ValueError):
-                continue
-        if ".." in candidate.parts:
-            continue
-        normalized = candidate.as_posix()
-        if normalized not in result:
-            result.append(normalized)
+        if isinstance(item, str) and item and item not in result:
+            result.append(item)
     return result
 
 
@@ -158,7 +149,7 @@ class CursorAdapter(Adapter):
             if not isinstance(name, str) or not name:
                 raise TranscriptError("Cursor postToolUse payload has no tool_name")
             record["tool_name"] = name
-            record["files_touched"] = _paths(payload.get("tool_input"), cwd_path)
+            record["files_touched"] = _paths(payload.get("tool_input"))
         elif event != "stop":
             return
 
@@ -235,7 +226,7 @@ class CursorAdapter(Adapter):
                 user_text=draft["user_text"],
                 assistant_text=draft["assistant_text"],
                 tool_summaries=draft["tools"],
-                files_touched=draft["files"],
+                files_touched=repo_relative_files(draft["files"], session),
             )
             for idx, draft in enumerate(drafts)
             if draft["complete"] and draft["start"] >= cursor
