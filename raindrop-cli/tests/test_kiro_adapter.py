@@ -40,7 +40,8 @@ class Pusher:
     def __call__(self, req):
         body = json.loads(req.content)
         self.sent.append(body)
-        return httpx.Response(200, json={"accepted": len(body["exchanges"])})
+        ids = [ex["id"] for ex in body["exchanges"]]
+        return httpx.Response(200, json={"accepted": len(ids), "ids": ids})
 
     @property
     def transport(self):

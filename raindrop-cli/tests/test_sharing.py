@@ -79,7 +79,8 @@ def test_sync_skips_unshared_repo_and_advances_cursor(env):
 
     def handler(req):
         sent.append(json.loads(req.content))
-        return httpx.Response(200, json={"accepted": len(sent[-1]["exchanges"])})
+        ids = [ex["id"] for ex in sent[-1]["exchanges"]]
+        return httpx.Response(200, json={"accepted": len(ids), "ids": ids})
 
     payload = _transcript(root)
     assert sync_cmd.run_sync(payload, "claude-code", httpx.MockTransport(handler)) == 0

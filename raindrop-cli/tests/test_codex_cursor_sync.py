@@ -32,7 +32,8 @@ def env(tmp_path, monkeypatch):
 def _transport(sent):
     def handler(req):
         sent.append(json.loads(req.content))
-        return httpx.Response(200, json={"accepted": len(sent[-1]["exchanges"])})
+        ids = [ex["id"] for ex in sent[-1]["exchanges"]]
+        return httpx.Response(200, json={"accepted": len(ids), "ids": ids})
     return httpx.MockTransport(handler)
 
 

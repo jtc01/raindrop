@@ -72,7 +72,8 @@ def test_sync_redacts_pushes_and_advances_cursor(env):
     def handler(req):
         sent.append(json.loads(req.content))
         assert req.headers["authorization"] == f"Bearer {KEY}"
-        return httpx.Response(200, json={"accepted": len(sent[-1]["exchanges"])})
+        ids = [ex["id"] for ex in sent[-1]["exchanges"]]
+        return httpx.Response(200, json={"accepted": len(ids), "ids": ids})
 
     n = sync_cmd.run_sync(payload, "claude-code", httpx.MockTransport(handler))
     assert n == 1  # unanswered 2nd prompt held back
@@ -89,6 +90,45 @@ def test_failed_push_leaves_cursor_unchanged(env):
     with pytest.raises(api_client.ApiError):
         sync_cmd.run_sync(payload, "claude-code", bad)
     assert not (env / ".raindrop/cursors/claude-code/sess1").exists()
+
+
+def test_one_bad_exchange_is_skipped_after_max_failures_not_retried_forever(env):
+    """A single exchange the server can never index (e.g. its embedding keeps
+    failing) must not block the rest of the session's sync forever: after
+    MAX_EXCHANGE_FAILURES attempts it's logged and skipped, and the cursor
+    advances past it."""
+    payload = transcript(env, *turn("hi", "yo"), *turn("second", "done"))
+    attempts = []
+
+    def handler(req):
+        batch = json.loads(req.content)["exchanges"]
+        attempts.append(batch)
+        # first exchange (idx 0) never makes it; second always succeeds.
+        ids = [ex["id"] for ex in batch if ex["idx"] != 0]
+        return httpx.Response(200, json={"accepted": len(ids), "ids": ids})
+
+    # the first MAX_EXCHANGE_FAILURES - 1 attempts keep retrying the whole batch
+    # (same as before this fix) because the bad exchange hasn't hit the limit yet.
+    for _ in range(sync_cmd.MAX_EXCHANGE_FAILURES - 1):
+        with pytest.raises(sync_cmd.RaindropError):
+            sync_cmd.run_sync(payload, "claude-code", httpx.MockTransport(handler))
+        assert not (env / ".raindrop/cursors/claude-code/sess1").exists()
+
+    # on the attempt that hits MAX_EXCHANGE_FAILURES, the bad exchange is given
+    # up on; since nothing else is blocking, the cursor finally advances.
+    n = sync_cmd.run_sync(payload, "claude-code", httpx.MockTransport(handler))
+    assert n == 2
+    cur = (env / ".raindrop/cursors/claude-code/sess1").read_text()
+    assert int(cur) > 0
+
+    log = (env / ".raindrop/sync.log").read_text()
+    assert "giving up on exchange" in log
+
+    # the session is fully read now, so a later sync makes no request at all
+    # (not just "skips resending the bad one" -- there's nothing left to read).
+    attempts.clear()
+    assert sync_cmd.run_sync(payload, "claude-code", httpx.MockTransport(handler)) == 0
+    assert attempts == []
 
 
 def test_sync_command_reads_stdin(env):
