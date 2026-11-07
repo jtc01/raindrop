@@ -19,6 +19,8 @@ from raindrop.errors import UnknownToolError
 ADAPTERS: dict[str, str] = {
     "claude-code": "raindrop.adapters.claude:ClaudeCodeAdapter",
     "kiro": "raindrop.adapters.kiro:KiroAdapter",
+    "antigravity": "raindrop.adapters.antigravity:AntigravityAdapter",
+    "copilot": "raindrop.adapters.copilot:CopilotAdapter",
     "codex": "raindrop.adapters.codex:CodexAdapter",
     "cursor": "raindrop.adapters.cursor:CursorAdapter",
 }
