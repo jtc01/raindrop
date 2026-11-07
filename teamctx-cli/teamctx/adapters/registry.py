@@ -17,7 +17,7 @@ from teamctx.adapters.base import Adapter
 from teamctx.errors import UnknownToolError
 
 ADAPTERS: dict[str, str] = {
-    "claude-code": "teamctx.adapters.claude_code:ClaudeCodeAdapter",
+    "claude-code": "teamctx.adapters.claude:ClaudeCodeAdapter",
     # "cursor": "teamctx.adapters.cursor:CursorAdapter",
 }
 
