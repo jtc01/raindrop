@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from raindrop.adapters._common import json_change, repo_relative_files, validate_session_id
+from raindrop.adapters._common import json_change, repo_relative_files, validate_session_id, newest_session_in_repo, jsonl_head
 from raindrop.adapters.base import Adapter, Change, SessionRef
 from raindrop.errors import TranscriptError
 from raindrop.models import Cursor, Exchange, ReadResult, ToolRecord

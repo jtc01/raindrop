@@ -12,6 +12,7 @@
   raindrop share [--repo] / unshare [--repo]  # opt this repo (or everything) in/out of sharing
   raindrop pause [--repo] / resume [--repo]   # temporarily stop/start sharing context
   raindrop whoami
+  raindrop help         # every command, grouped; `help <command>` for details
 
 Other owners add their commands (sync, tools add, proxy) to `app` below.
 """
@@ -321,7 +322,7 @@ def resume(repo: bool = typer.Option(False, "--repo", help="Resume only the git 
 
 @app.command("rotate-key")
 def rotate_key(yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation.")):
-    """Replace your API key with a new one and revoke the old one (e.g. if it leaked)."""
+    """Replace your API key with a new one and revoke the old one (use this if it leaked)."""
     cfg = _require_config()
     if not yes:
         typer.confirm("Issue a new key and revoke the current one?", abort=True)
@@ -452,6 +453,96 @@ def _sharing_summary(cfg: dict) -> str:
     else:
         here = "this repo is NOT shared"
     return f"{base} ({here})"
+
+
+
+# ---------- raindrop help ----------
+
+# Which section each command appears under in `raindrop help`. Anything not
+# listed here still shows up (under "More"), so new commands never go missing.
+HELP_SECTIONS: list[tuple[str, list[str]]] = [
+    ("Get started", ["create-team", "join", "tools", "doctor"]),
+    ("Your team", ["teammates", "invite", "codes", "remove", "leave"]),
+    ("Sharing and privacy", ["share", "unshare", "pause", "resume"]),
+    ("Your account", ["whoami", "rotate-key"]),
+]
+# Run by your coding tool, not by you. Listed last so people know what they are.
+HELP_AUTOMATIC = ["sync", "proxy"]
+
+
+def _is_group(cmd) -> bool:
+    # Typer ships its own copy of Click, so check for subcommands instead of the class.
+    return hasattr(cmd, "list_commands") and hasattr(cmd, "get_command")
+
+
+def _sub_ctx(parent, cmd, name: str):
+    return type(parent)(cmd, info_name=name, parent=parent)
+
+
+def _short(cmd) -> str:
+    return cmd.get_short_help_str(limit=200)
+
+
+def _help_rows(group, ctx, name: str) -> list[tuple[str, str]]:
+    """One row per command; groups expand to one row per subcommand."""
+    cmd = group.get_command(ctx, name)
+    if cmd is None or cmd.hidden:
+        return []
+    if not _is_group(cmd):
+        return [(name, _short(cmd))]
+    rows = []
+    if cmd.invoke_without_command:  # e.g. `raindrop codes` does something on its own
+        rows.append((name, _short(cmd)))
+    sub_ctx = _sub_ctx(ctx, cmd, name)
+    for sub in cmd.list_commands(sub_ctx):
+        subcmd = cmd.get_command(sub_ctx, sub)
+        if subcmd is not None and not subcmd.hidden:
+            rows.append((f"{name} {sub}", _short(subcmd)))
+    return rows
+
+
+@app.command("help")
+def help_command(
+    ctx: typer.Context,
+    command: list[str] = typer.Argument(None, help="A command to explain, e.g. `share` or `tools add`."),
+):
+    """List every Raindrop command, or explain one: `raindrop help share`."""
+    root = ctx.find_root()
+    group = root.command
+
+    if command:  # raindrop help <command> [subcommand]
+        cmd, cmd_ctx = group, root
+        for part in command:
+            sub = cmd.get_command(cmd_ctx, part) if _is_group(cmd) else None
+            if sub is None:
+                typer.secho(f"No command '{' '.join(command)}'. Run `raindrop help` to see them all.",
+                            fg="red", err=True)
+                raise typer.Exit(1)
+            cmd, cmd_ctx = sub, _sub_ctx(cmd_ctx, sub, part)
+        typer.echo(cmd.get_help(cmd_ctx))
+        return
+
+    names = [n for n in group.list_commands(root) if n != "help"]
+    listed = {n for _, ns in HELP_SECTIONS for n in ns} | set(HELP_AUTOMATIC)
+    sections = [(title, [n for n in ns if n in names]) for title, ns in HELP_SECTIONS]
+    extra = [n for n in names if n not in listed]
+    if extra:
+        sections.append(("More", extra))
+    sections.append(("Run automatically by your coding tool", [n for n in HELP_AUTOMATIC if n in names]))
+
+    rows_by_section = [(t, [r for n in ns for r in _help_rows(group, root, n)]) for t, ns in sections]
+    width = max((len(c) for _, rows in rows_by_section for c, _ in rows), default=10)
+
+    typer.secho("Raindrop: share your coding agent's context with your team.", bold=True)
+    for title, rows in rows_by_section:
+        if not rows:
+            continue
+        typer.echo()
+        typer.secho(title, bold=True)
+        for name, desc in rows:
+            typer.echo(f"  raindrop {name:<{width}}  {desc}")
+    typer.echo()
+    typer.echo("Details on any command: raindrop help <command>  (or add --help)")
 
 
 if __name__ == "__main__":
