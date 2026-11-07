@@ -17,6 +17,7 @@ KEY = "rd_supersecretkey_1234567890abcdef"
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.delenv("USER_PROMPT", raising=False)
     monkeypatch.setattr("shutil.which", lambda name: None)
     monkeypatch.setattr(config, "CONFIG_DIR", tmp_path / ".raindrop")

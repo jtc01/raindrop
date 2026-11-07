@@ -26,7 +26,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
 import shutil
 import time
 from hashlib import sha1
@@ -41,6 +40,7 @@ from raindrop.adapters._common import (
     dump_json,
     edit_file,
     exe,
+    quote_cmd,
     load_json_text,
     summarize_tool,
 )
@@ -102,7 +102,7 @@ def _remove_mcp(text: str, path: Path) -> str:
 
 
 def _hooks_text() -> str:
-    command = f"{shlex.quote(exe())} sync --tool kiro --fail-open"
+    command = f"{quote_cmd(exe())} sync --tool kiro --fail-open"
     hooks = [
         {
             "name": f"raindrop-{trigger.lower()}",
@@ -138,7 +138,7 @@ def _event_kind(payload: dict) -> str | None:
 def _session_id(payload: dict) -> str:
     sid = payload.get("session_id")
     if isinstance(sid, str) and sid.strip():
-        return re.sub(r"[^A-Za-z0-9._:-]", "_", sid.strip()).replace("..", "_")[:128]
+        return re.sub(r"[^A-Za-z0-9._-]", "_", sid.strip()).replace("..", "_")[:128]
     # Older CLI builds send no session_id; fall back to one session per directory.
     cwd = str(payload.get("cwd") or "")
     return "kiro-" + sha1(cwd.encode()).hexdigest()[:12]
@@ -146,7 +146,7 @@ def _session_id(payload: dict) -> str:
 
 def _append(path: Path, record: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)  # binary: no \n -> \r\n on Windows
     try:
         os.write(fd, (json.dumps(record) + "\n").encode())
     finally:

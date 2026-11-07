@@ -10,6 +10,7 @@ from raindrop.adapters.claude import ClaudeCodeAdapter
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setattr("shutil.which", lambda name: None)  # force file-merge path
     return tmp_path
 

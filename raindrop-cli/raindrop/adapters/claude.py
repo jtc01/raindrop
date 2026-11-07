@@ -31,7 +31,10 @@ from raindrop.adapters._common import (
     diff,
     dump_json,
     edit_file,
+    display_cmd,
     exe,
+    is_our_hook_command,
+    quote_cmd,
     load_json_text,
     summarize_tool,
 )
@@ -48,7 +51,7 @@ _NOISE_PREFIXES = (
 
 
 def _hook_command() -> str:
-    return f"{exe()} sync --tool claude-code"
+    return f"{quote_cmd(exe())} sync --tool claude-code"
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +83,7 @@ def _remove_mcp_from_json(text: str, path: Path) -> str:
 
 def _is_ours(group: object) -> bool:
     return isinstance(group, dict) and any(
-        constants.HOOK_MARKER in str(h.get("command", ""))
+        is_our_hook_command(h.get("command", ""))
         for h in group.get("hooks", [])
         if isinstance(h, dict)
     )
@@ -245,10 +248,13 @@ class ClaudeCodeAdapter(Adapter):
 
     def _plan_mcp(self) -> Change:
         server = constants.MCP_SERVER_NAME
-        if shutil.which("claude"):
+        claude = shutil.which("claude")
+        if claude:
             self._mcp_method = "cli"
-            add = ["claude", "mcp", "add", "--scope", "user", server, "--", exe(), "proxy"]
-            remove = ["claude", "mcp", "remove", "--scope", "user", server]
+            # Full path from which(): on Windows `claude` is often a .cmd shim
+            # that a bare name can't launch.
+            add = [claude, "mcp", "add", "--scope", "user", server, "--", exe(), "proxy"]
+            remove = [claude, "mcp", "remove", "--scope", "user", server]
 
             def run() -> None:
                 # Remove first so re-running install replaces rather than errors.
@@ -261,7 +267,7 @@ class ClaudeCodeAdapter(Adapter):
                 kind="cmd",
                 target="claude",
                 description=f"Register '{server}' MCP server with Claude Code (user scope)",
-                preview=" ".join(add),
+                preview=display_cmd(["claude", *add[1:]]),
                 component="mcp",
                 _apply=run,
             )
@@ -313,9 +319,10 @@ class ClaudeCodeAdapter(Adapter):
     def uninstall(self, record: ToolRecord) -> None:
         if record.get("mcp"):
             method = (record.get("extra") or {}).get("mcp_method", "cli")
-            if method == "cli" and shutil.which("claude"):
+            claude = shutil.which("claude")
+            if method == "cli" and claude:
                 subprocess.run(
-                    ["claude", "mcp", "remove", "--scope", "user", constants.MCP_SERVER_NAME],
+                    [claude, "mcp", "remove", "--scope", "user", constants.MCP_SERVER_NAME],
                     capture_output=True,
                     text=True,
                 )

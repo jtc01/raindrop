@@ -2,6 +2,7 @@
 fake /mcp that enforces the Bearer key like the API's AuthMiddleware."""
 import asyncio
 import json
+import os
 import socket
 import sys
 import threading
@@ -75,7 +76,9 @@ def proxy_client(home: Path) -> Client:
     return Client(StdioTransport(
         command=sys.executable,
         args=["-c", "from raindrop.cli import app; app()", "proxy"],
-        env={"HOME": str(home), "RAINDROP_HOME": str(home / ".raindrop"), "PYTHONPATH": str(CLI_DIR),
+        # Inherit the environment: a bare dict loses SYSTEMROOT, which Python needs on Windows.
+        env={**os.environ, "HOME": str(home), "USERPROFILE": str(home),
+             "RAINDROP_HOME": str(home / ".raindrop"), "PYTHONPATH": str(CLI_DIR),
              "RAINDROP_SESSION_ID": "sess-test-1"},
         cwd=str(CLI_DIR),
     ))

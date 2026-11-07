@@ -9,6 +9,7 @@ from raindrop import cli
 from raindrop import config
 from raindrop import sync_cmd
 from raindrop import constants
+from raindrop.adapters._common import is_our_hook_command
 
 runner = CliRunner()
 KEY = "rd_supersecretkey_1234567890abcdef"
@@ -17,6 +18,7 @@ KEY = "rd_supersecretkey_1234567890abcdef"
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setattr("shutil.which", lambda name: None)
     monkeypatch.setattr(config, "CONFIG_DIR", tmp_path / ".raindrop")
     monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / ".raindrop" / "config.json")
@@ -48,11 +50,12 @@ def test_tools_add_dry_run_then_add_then_remove(env):
     cfg = config.load()
     assert cfg["tools"]["claude-code"]["hook"] is True
     assert cfg["tools"]["claude-code"]["extra"]["mcp_method"] == "file"
-    assert constants.HOOK_MARKER in constants.claude_settings_path().read_text()
+    assert is_our_hook_command(json.loads(constants.claude_settings_path().read_text())
+                               ["hooks"]["Stop"][0]["hooks"][0]["command"])
 
     r = runner.invoke(cli.app, ["tools", "remove", "claude-code"])
     assert r.exit_code == 0 and config.load()["tools"] == {}
-    assert constants.HOOK_MARKER not in constants.claude_settings_path().read_text()
+    assert "Stop" not in json.loads(constants.claude_settings_path().read_text()).get("hooks", {})
 
 
 def test_tools_add_requires_join(env):
