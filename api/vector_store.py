@@ -33,7 +33,20 @@ class VectorMatch(NamedTuple):
 
 
 class VectorStoreError(Exception):
-    """Non-retryable S3 Vectors failure (bad permissions, validation, ...)."""
+    """S3 Vectors call failed after botocore's own retries (throttling, 5xx,
+    bad permissions, ...). Callers treat this as retryable."""
+
+
+class VectorStoreValidationError(VectorStoreError):
+    """S3 Vectors rejected the request itself (ValidationException). The same
+    input will fail the same way every time, so retrying is pointless."""
+
+
+# S3 Vectors rejects empty arrays in metadata ("Empty arrays are not allowed in
+# metadata"); None/empty values carry no information for search anyway, which
+# reads them with .get(key, default).
+def _sanitize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in metadata.items() if v is not None and v != [] and v != {} and v != ""}
 
 
 def put_vector(vector_id: str, embedding: Sequence[float], metadata: dict[str, Any]) -> None:
@@ -58,13 +71,41 @@ def put_vectors_batch(items: Sequence[tuple[str, Sequence[float], dict[str, Any]
                     {
                         "key": vector_id,
                         "data": {"float32": list(embedding)},
-                        "metadata": metadata,
+                        "metadata": _sanitize_metadata(metadata),
                     }
                     for vector_id, embedding, metadata in chunk
                 ],
             )
         except _s3vectors.exceptions.ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") == "ValidationException":
+                raise VectorStoreValidationError(f"put_vectors rejected input: {exc}") from exc
             raise VectorStoreError(f"put_vectors failed: {exc}") from exc
+
+
+# GetVectors caps the number of keys per call.
+GET_VECTORS_BATCH_LIMIT = 100
+
+
+def existing_vector_keys(keys: Sequence[str]) -> set[str]:
+    """Which of `keys` currently exist in the index (metadata/data not fetched).
+    Used by scripts/backfill_vectors.py to find exchanges that are in S3 but
+    never made it into the index.
+    """
+    found: set[str] = set()
+    for start in range(0, len(keys), GET_VECTORS_BATCH_LIMIT):
+        chunk = list(keys[start : start + GET_VECTORS_BATCH_LIMIT])
+        try:
+            response = _s3vectors.get_vectors(
+                vectorBucketName=VECTOR_BUCKET_NAME,
+                indexName=VECTOR_INDEX_NAME,
+                keys=chunk,
+                returnData=False,
+                returnMetadata=False,
+            )
+        except _s3vectors.exceptions.ClientError as exc:
+            raise VectorStoreError(f"get_vectors failed: {exc}") from exc
+        found.update(item["key"] for item in response.get("vectors", []))
+    return found
 
 
 def query_vectors(query_embedding: Sequence[float], team_id: str, top_k: int) -> list[VectorMatch]:

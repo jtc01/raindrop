@@ -12,7 +12,7 @@ from botocore.config import Config
 
 from config import AWS_REGION, EXCHANGES_BUCKET, MAX_RETRY_ATTEMPTS
 from embed import EmbeddingError, build_exchange_embedding_text, embed_text
-from vector_store import VectorStoreError, put_vector
+from vector_store import VectorStoreError, VectorStoreValidationError, put_vector
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,25 @@ def _vector_id(session_id: str, idx: int) -> str:
     # Matches Exchange.id in raindrop-cli/raindrop/models.py -- keep the S3 key, the
     # vector key, and the CLI's own notion of an exchange's identity in sync.
     return f"{session_id}:{idx}"
+
+
+def vector_metadata(doc: dict[str, Any], s3_key: str) -> dict[str, Any]:
+    """Metadata stored alongside the vector for an exchange document (the same
+    dict ingest_exchanges writes to S3). Shared with scripts/backfill_vectors.py
+    so backfilled vectors are indistinguishable from ingested ones. Empty values
+    (e.g. files_touched: []) are dropped by vector_store before the write.
+    """
+    return {
+        "team_id": doc["team_id"],
+        "agent_id": doc["agent_id"],
+        "display_name": doc["display_name"],  # shown by search even if the S3 hydration fetch fails
+        "session_id": doc["session_id"],
+        "idx": doc["idx"],
+        "ts": doc["ts"],
+        "s3_key": s3_key,
+        "files_touched": doc.get("files_touched", []),
+        "preview": doc["assistant_text"][:200],
+    }
 
 
 def ingest_exchanges(identity: dict[str, Any], exchanges: list[dict[str, Any]]) -> dict[str, Any]:
@@ -64,6 +83,12 @@ def ingest_exchanges(identity: dict[str, Any], exchanges: list[dict[str, Any]]) 
         accepted. The S3 object stays (redundant rewrite on retry is
         harmless, same key), and the vector write is retried under the same
         idempotent vector_id next time the client resends this batch.
+      - EXCEPTION: S3 Vectors rejects the input outright (ValidationException,
+        raised as VectorStoreValidationError). Resending the same exchange can
+        never succeed, so withholding `accepted` would just make the client
+        retry the same batch forever and block every exchange behind it. The
+        exchange IS durably in S3, so count it accepted, log loudly, and let
+        scripts/backfill_vectors.py pick it up once the cause is fixed.
     """
     team_id = identity["team_id"]
     agent_id = identity["agent_id"]
@@ -109,20 +134,13 @@ def ingest_exchanges(identity: dict[str, Any], exchanges: list[dict[str, Any]]) 
                 doc["user_text"], doc["assistant_text"], doc["files_touched"]
             )
             embedding = embed_text(text)
-            put_vector(
+            put_vector(vector_id, embedding, metadata=vector_metadata(doc, s3_key))
+        except VectorStoreValidationError:
+            logger.exception(
+                "ingest_exchanges: vector_write_rejected=true for %s "
+                "(deterministic ValidationException; exchange stored in S3 and counted as accepted "
+                "so the client moves on, but it is NOT searchable until backfilled)",
                 vector_id,
-                embedding,
-                metadata={
-                    "team_id": team_id,
-                    "agent_id": agent_id,
-                    "display_name": display_name,  # shown by search even if the S3 hydration fetch fails
-                    "session_id": session_id,
-                    "idx": idx,
-                    "ts": doc["ts"],
-                    "s3_key": s3_key,
-                    "files_touched": doc["files_touched"],
-                    "preview": doc["assistant_text"][:200],
-                },
             )
         except (EmbeddingError, VectorStoreError):
             logger.exception(
