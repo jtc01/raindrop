@@ -65,6 +65,9 @@ def add(
         cfg.setdefault("tools", {})[adapter.name] = status.to_tool_record()
         config.save(cfg)
         typer.secho(_summary(adapter, status), fg="green")
+        if not status.hook:
+            typer.echo(f"Note: auto-sync isn't available for {adapter.display_name} yet. "
+                       "It can read your team's context, but won't share your own sessions.")
 
     _run(go)
 

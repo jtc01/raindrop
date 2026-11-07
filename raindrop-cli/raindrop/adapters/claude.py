@@ -26,7 +26,7 @@ from pathlib import Path
 
 from raindrop import constants
 from raindrop.adapters._common import (
-    RULES_BODY,
+    add_rules_block,
     apply_file_edit,
     diff,
     dump_json,
@@ -35,6 +35,7 @@ from raindrop.adapters._common import (
     exe,
     is_our_hook_command,
     quote_cmd,
+    strip_rules_block,
     load_json_text,
     summarize_tool,
 )
@@ -114,32 +115,6 @@ def _remove_hook(text: str, path: Path) -> str:
         if not hooks:
             del data["hooks"]
     return dump_json(data)
-
-
-def _rules_block() -> str:
-    return f"{constants.RULES_START}\n{RULES_BODY}\n{constants.RULES_END}"
-
-
-def _strip_rules(text: str) -> str:
-    start = text.find(constants.RULES_START)
-    end = text.find(constants.RULES_END)
-    if start == -1 or end == -1 or end < start:
-        return text
-    end += len(constants.RULES_END)
-    # Swallow the blank line we added before the block.
-    head = text[:start].rstrip("\n")
-    tail = text[end:].lstrip("\n")
-    if head and tail:
-        return head + "\n\n" + tail
-    return (head + "\n" if head else "") + tail
-
-
-def _add_rules(text: str) -> str:
-    base = _strip_rules(text)
-    block = _rules_block() + "\n"
-    if not base.strip():
-        return block
-    return base.rstrip("\n") + "\n\n" + block
 
 
 # ---------------------------------------------------------------------------
@@ -300,14 +275,14 @@ class ClaudeCodeAdapter(Adapter):
 
     def _plan_rules(self) -> Change:
         path = constants.claude_md_path()
-        old, new = edit_file(path, _add_rules)
+        old, new = edit_file(path, add_rules_block)
         return Change(
             kind="append",
             target=str(path),
             description="Add a Raindrop usage block to CLAUDE.md",
             preview=diff(path, old, new) or "(already installed, no change)",
             component="rules",
-            _apply=lambda: apply_file_edit(path, "rules", _add_rules),
+            _apply=lambda: apply_file_edit(path, "rules", add_rules_block),
         )
 
     def apply(self, changes: list[Change]) -> InstallStatus:
@@ -333,7 +308,7 @@ class ClaudeCodeAdapter(Adapter):
             path = constants.claude_settings_path()
             apply_file_edit(path, "hook", lambda t: _remove_hook(t, path))
         if record.get("rules"):
-            apply_file_edit(constants.claude_md_path(), "rules", _strip_rules)
+            apply_file_edit(constants.claude_md_path(), "rules", strip_rules_block)
 
     # ---- extraction side --------------------------------------------------
 
