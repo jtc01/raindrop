@@ -27,7 +27,8 @@ class StopSyncTests(unittest.TestCase):
             self.addCleanup(lambda: (setattr(config, "CONFIG_DIR", old[0]),
                                      setattr(config, "CONFIG_PATH", old[1])))
             config.save({"api_url": "https://api.test", "api_key": KEY, "agent_id": "a",
-                         "team_id": "t", "display_name": "D", "focus": "", "tools": {}})
+                         "team_id": "t", "display_name": "D", "focus": "", "tools": {},
+                         "sharing": {"mode": "all"}})  # default is opt-in per repo
 
             lines = [
                 {"type": "user", "timestamp": "2026-01-01T00:00:00Z",
