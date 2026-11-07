@@ -5,9 +5,7 @@ Claude Code adapter.
 Install side:
   - MCP:   `claude mcp add --scope user raindrop -- raindrop proxy`, or a merge
            into ~/.claude.json when the `claude` binary isn't on PATH.
-  - Hook:  NOT installed here. The Stop hook is the standalone script in
-           stophooks/claude-code-stop-hook/ (see its README). uninstall() still
-           removes a hook that an older version of this adapter installed.
+  - Hook:  a Stop hook in ~/.claude/settings.json that runs `raindrop sync`.
   - Rules: a delimited block appended to ~/.claude/CLAUDE.md.
 
 Extraction side: tails Claude Code's JSONL transcript. The cursor is a byte
@@ -36,6 +34,7 @@ from raindrop.adapters._common import (
     display_cmd,
     exe,
     is_our_hook_command,
+    quote_cmd,
     load_json_text,
     summarize_tool,
 )
@@ -49,6 +48,10 @@ _NOISE_PREFIXES = (
     "<local-command-caveat>",
     "[Request interrupted by user",
 )
+
+
+def _hook_command() -> str:
+    return f"{quote_cmd(exe())} sync --tool claude-code"
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +87,17 @@ def _is_ours(group: object) -> bool:
         for h in group.get("hooks", [])
         if isinstance(h, dict)
     )
+
+
+def _add_hook(text: str, path: Path) -> str:
+    data = load_json_text(text, path)
+    hooks = data.setdefault("hooks", {})
+    stop = [g for g in hooks.get("Stop", []) if not _is_ours(g)]
+    stop.append(
+        {"hooks": [{"type": "command", "command": _hook_command(), "timeout": 60}]}
+    )
+    hooks["Stop"] = stop
+    return dump_json(data)
 
 
 def _remove_hook(text: str, path: Path) -> str:
@@ -227,7 +241,7 @@ class ClaudeCodeAdapter(Adapter):
         return shutil.which("claude") is not None or constants.claude_dir().is_dir()
 
     def plan_install(self, rules: bool) -> list[Change]:
-        changes = [self._plan_mcp()]
+        changes = [self._plan_mcp(), self._plan_hook()]
         if rules:
             changes.append(self._plan_rules())
         return changes
@@ -272,6 +286,18 @@ class ClaudeCodeAdapter(Adapter):
             ),
         )
 
+    def _plan_hook(self) -> Change:
+        path = constants.claude_settings_path()
+        old, new = edit_file(path, lambda t: _add_hook(t, path))
+        return Change(
+            kind="merge",
+            target=str(path),
+            description="Add Stop hook that syncs each finished turn to your team",
+            preview=diff(path, old, new) or "(already installed, no change)",
+            component="hook",
+            _apply=lambda: apply_file_edit(path, "hook", lambda t: _add_hook(t, path)),
+        )
+
     def _plan_rules(self) -> Change:
         path = constants.claude_md_path()
         old, new = edit_file(path, _add_rules)
@@ -303,7 +329,7 @@ class ClaudeCodeAdapter(Adapter):
             else:
                 path = constants.claude_json_path()
                 apply_file_edit(path, "mcp", lambda t: _remove_mcp_from_json(t, path))
-        if record.get("hook"):  # legacy: installed by an older version
+        if record.get("hook"):
             path = constants.claude_settings_path()
             apply_file_edit(path, "hook", lambda t: _remove_hook(t, path))
         if record.get("rules"):

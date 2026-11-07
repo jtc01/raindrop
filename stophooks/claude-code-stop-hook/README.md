@@ -1,9 +1,15 @@
 # Claude Code Stop hook
 
 `claude_stop_sync.py` syncs each finished Claude Code turn to Raindrop. It is a
-standalone script, like the Codex and Cursor hooks. `raindrop tools add
-claude-code` no longer installs a hook; it only registers the MCP server (and
-the optional rules block). Add this hook yourself as described below.
+standalone script, like the Codex and Cursor hooks.
+
+There are two ways to get a Claude Code Stop hook. Use one, not both:
+
+- **Installed by the CLI (recommended):** `raindrop tools add claude-code`
+  registers the MCP server and adds a Stop hook that runs
+  `raindrop sync --tool claude-code`. Nothing else to configure.
+- **This script:** add it to `~/.claude/settings.json` yourself, as described
+  below. Use it if you want to run the hook straight from the repo checkout.
 
 The script reuses the Raindrop CLI's sync pipeline (`raindrop.sync_cmd.run_sync`):
 
@@ -44,13 +50,12 @@ already have. Replace the path with this repository's absolute path:
 On success the script prints `Raindrop synced N exchange(s).` to stderr. On
 failure it prints the error and exits 1.
 
-## Removing an older hook
+## Don't install both
 
-Earlier versions of `raindrop tools add claude-code` installed a hook that ran
-`raindrop sync --tool claude-code`. `raindrop tools remove claude-code` still
-removes that older hook. If you installed both, remove one so turns are not
-synced twice (the API is idempotent, so a duplicate would not create duplicate
-data, but it wastes a request).
+If you ran `raindrop tools add claude-code`, the CLI already added a hook, so
+skip this script. With both, every turn is synced twice. The API is idempotent,
+so no duplicate data is stored, but it wastes a request. `raindrop tools remove
+claude-code` removes the CLI's hook.
 
 ## Tests
 

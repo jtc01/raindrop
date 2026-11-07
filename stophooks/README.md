@@ -5,7 +5,7 @@ Cursor provide different hook payloads and have different behavior:
 
 - `claude-code-stop-hook/claude_stop_sync.py` syncs finished Claude Code turns
   through the CLI's sync pipeline (redaction included). `raindrop tools add
-  claude-code` no longer installs a hook; see that folder's README.
+  claude-code` can also install a hook for you; see that folder's README.
 - `codex-stop-hook/stop_sync.py` reads Codex transcript data, redacts it, and
   uploads completed exchanges to Raindrop.
 - `cursor-stop-hook/capture.py` currently records only the structure of

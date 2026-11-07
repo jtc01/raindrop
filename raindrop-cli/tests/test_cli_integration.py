@@ -9,6 +9,7 @@ from raindrop import cli
 from raindrop import config
 from raindrop import sync_cmd
 from raindrop import constants
+from raindrop.adapters._common import is_our_hook_command
 
 runner = CliRunner()
 KEY = "rd_supersecretkey_1234567890abcdef"
@@ -45,14 +46,16 @@ def test_tools_add_dry_run_then_add_then_remove(env):
 
     r = runner.invoke(cli.app, ["tools", "add", "claude-code", "--yes", "--rules"])
     assert r.exit_code == 0, r.output
-    assert "Claude Code ✓ MCP + rules" in r.output
+    assert "Claude Code ✓ MCP + auto-sync hook + rules" in r.output
     cfg = config.load()
-    assert cfg["tools"]["claude-code"]["hook"] is False
+    assert cfg["tools"]["claude-code"]["hook"] is True
     assert cfg["tools"]["claude-code"]["extra"]["mcp_method"] == "file"
-    assert not constants.claude_settings_path().exists()  # no Stop hook installed by the CLI
+    assert is_our_hook_command(json.loads(constants.claude_settings_path().read_text())
+                               ["hooks"]["Stop"][0]["hooks"][0]["command"])
 
     r = runner.invoke(cli.app, ["tools", "remove", "claude-code"])
     assert r.exit_code == 0 and config.load()["tools"] == {}
+    assert "Stop" not in json.loads(constants.claude_settings_path().read_text()).get("hooks", {})
 
 
 def test_tools_add_requires_join(env):

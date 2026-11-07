@@ -83,10 +83,10 @@ def test_install_uninstall_roundtrip_is_idempotent(home):
     a = ClaudeCodeAdapter()
     for _ in range(2):
         status = a.apply(a.plan_install(rules=True))
-    assert status.mcp and status.rules and not status.hook  # the Stop hook is a standalone script now
+    assert status.mcp and status.hook and status.rules
     settings = json.loads(constants.claude_settings_path().read_text())
-    assert settings["hooks"]["Stop"] == [{"hooks": [{"type": "command", "command": "other"}]}]
-    assert settings["model"] == "x"
+    stop = settings["hooks"]["Stop"]
+    assert len(stop) == 2 and settings["model"] == "x"
     assert constants.claude_md_path().read_text().count(constants.RULES_START) == 1
     assert constants.MCP_SERVER_NAME in json.loads(constants.claude_json_path().read_text())["mcpServers"]
 
@@ -95,17 +95,6 @@ def test_install_uninstall_roundtrip_is_idempotent(home):
     assert settings["hooks"]["Stop"] == [{"hooks": [{"type": "command", "command": "other"}]}]
     assert constants.claude_md_path().read_text() == "# mine\n"
     assert constants.MCP_SERVER_NAME not in json.loads(constants.claude_json_path().read_text()).get("mcpServers", {})
-
-
-def test_uninstall_removes_hook_from_older_install(home):
-    constants.claude_settings_path().parent.mkdir()
-    constants.claude_settings_path().write_text(json.dumps({"hooks": {"Stop": [
-        {"hooks": [{"type": "command", "command": "other"}]},
-        {"hooks": [{"type": "command", "command": "raindrop sync --tool claude-code"}]},
-    ]}}))
-    ClaudeCodeAdapter().uninstall({"mcp": False, "hook": True, "rules": False})
-    assert json.loads(constants.claude_settings_path().read_text())["hooks"]["Stop"] == [
-        {"hooks": [{"type": "command", "command": "other"}]}]
 
 
 def test_plan_does_not_modify(home):
