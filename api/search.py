@@ -13,7 +13,7 @@ from typing import Any, Optional
 import boto3
 from botocore.config import Config
 
-from api.config import (
+from config import (
     AWS_REGION,
     EXCHANGES_BUCKET,
     MAX_RETRY_ATTEMPTS,
@@ -22,8 +22,8 @@ from api.config import (
     SEARCH_OVERFETCH_MULTIPLIER,
     SEARCH_TOP_K_DEFAULT,
 )
-from api.embed import embed_text
-from api.vector_store import VectorMatch, query_vectors
+from embed import embed_text
+from vector_store import VectorMatch, query_vectors
 
 logger = logging.getLogger(__name__)
 

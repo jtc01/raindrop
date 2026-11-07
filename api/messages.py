@@ -9,9 +9,9 @@ from typing import Any
 import boto3
 from botocore.config import Config
 
-from api.config import AWS_REGION, EXCHANGES_BUCKET, MAX_RETRY_ATTEMPTS
-from api.embed import EmbeddingError, build_exchange_embedding_text, embed_text
-from api.vector_store import VectorStoreError, put_vector
+from config import AWS_REGION, EXCHANGES_BUCKET, MAX_RETRY_ATTEMPTS
+from embed import EmbeddingError, build_exchange_embedding_text, embed_text
+from vector_store import VectorStoreError, put_vector
 
 logger = logging.getLogger(__name__)
 

@@ -88,8 +88,25 @@ Resources:
           JOIN_CODES_TABLE: !Ref JoinCodesTable
           AGENTS_TABLE: !Ref AgentsTable
           EXCHANGES_BUCKET: !Ref ExchangesBucket
+          VECTOR_BUCKET_NAME: !Sub raindrop-vectors-${AWS::AccountId}
+          VECTOR_INDEX_NAME: raindrop-exchanges
       Policies:
         - S3WritePolicy: { BucketName: !Ref ExchangesBucket }
+        - S3ReadPolicy: { BucketName: !Ref ExchangesBucket }
+        - Statement:
+            - Sid: BedrockTitanEmbed
+              Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0
+            - Sid: S3VectorsExchanges
+              Effect: Allow
+              Action:
+                - s3vectors:PutVectors
+                - s3vectors:QueryVectors
+                - s3vectors:GetVectors
+              Resource:
+                - !Sub arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/raindrop-vectors-${AWS::AccountId}
+                - !Sub arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/raindrop-vectors-${AWS::AccountId}/index/raindrop-exchanges
         - DynamoDBCrudPolicy: { TableName: !Ref TeamsTable }
         - DynamoDBCrudPolicy: { TableName: !Ref JoinCodesTable }
         - DynamoDBCrudPolicy: { TableName: !Ref AgentsTable }

@@ -11,7 +11,7 @@ from typing import Sequence
 import boto3
 from botocore.config import Config
 
-from api.config import (
+from config import (
     AWS_REGION,
     EMBED_DIMENSIONS,
     EMBED_MAX_INPUT_CHARS,

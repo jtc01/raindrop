@@ -3,6 +3,7 @@
 Run locally:   uvicorn app:app --port 8080
 MCP endpoint:  http://localhost:8080/mcp
 
+MCP tools:      ping, whoami, search_team_context, list_teammates
 Public routes:  GET /health, POST /teams, POST /join
 Authed routes:  /mcp, POST /messages, POST /invite, GET /me, GET /teammates,
                 POST /rotate-key, POST /leave, POST /remove (lead), GET /codes,
@@ -15,7 +16,6 @@ import re
 import secrets
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 
 import anyio
 import boto3
@@ -26,12 +26,14 @@ from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+import messages  # ingestion: S3 write + Titan embedding + S3 Vectors upsert
+import search  # retrieval: embed query, scoped vector search, rerank, hydrate
+
 # ---------- config ----------
 
 TEAMS_TABLE = os.environ.get("TEAMS_TABLE", "raindrop-teams")
 JOIN_CODES_TABLE = os.environ.get("JOIN_CODES_TABLE", "raindrop-join-codes")
 AGENTS_TABLE = os.environ.get("AGENTS_TABLE", "raindrop-agents")
-EXCHANGES_BUCKET = os.environ.get("EXCHANGES_BUCKET", "")
 
 JOIN_CODE_TTL_SECONDS = 48 * 3600
 JOIN_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/I
@@ -42,7 +44,6 @@ _ddb = boto3.resource("dynamodb")
 teams = _ddb.Table(TEAMS_TABLE)
 join_codes = _ddb.Table(JOIN_CODES_TABLE)
 agents = _ddb.Table(AGENTS_TABLE)
-_s3 = boto3.client("s3")
 
 
 # ---------- helpers ----------
@@ -163,6 +164,49 @@ def ping() -> str:
 def whoami() -> dict:
     """Returns the team and agent this connection is authenticated as."""
     return current_identity()
+
+
+SEARCH_TEXT_MAX_CHARS = 1500
+SEARCH_TOP_K_MAX = 25
+
+
+def _trim(text: str | None, limit: int = SEARCH_TEXT_MAX_CHARS) -> str:
+    text = text or ""
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+
+
+@mcp.tool
+def search_team_context(query: str, top_k: int = 8) -> dict:
+    """Semantic search over what your teammates' agents have been working on.
+    Returns the most relevant recent exchanges (prompt + reply + files touched)
+    from everyone on your team, including you. Use it before starting work that
+    may overlap with a teammate's, or to find out who touched a file or feature."""
+    ident = current_identity()
+    top_k = max(1, min(int(top_k), SEARCH_TOP_K_MAX))
+    results = search.search(ident["team_id"], query, top_k)
+    names = {m["agent_id"]: m["display_name"] for m in list_team_members(ident["team_id"])}
+    return {
+        "query": query,
+        "results": [{
+            "display_name": names.get(r.get("agent_id"), r.get("agent_id") or "unknown"),
+            "agent_id": r.get("agent_id"),
+            "ts": r.get("ts"),
+            "files_touched": r.get("files_touched", []),
+            "user_text": _trim(r.get("user_text")),
+            "assistant_text": _trim(r.get("assistant_text")),
+            "score": round(float(r.get("score", 0.0)), 4),
+        } for r in results],
+    }
+
+
+@mcp.tool
+def list_teammates() -> dict:
+    """Lists the active members of your team (display_name, focus, agent_id)."""
+    ident = current_identity()
+    members = list_team_members(ident["team_id"])
+    for m in members:
+        m["you"] = m["agent_id"] == ident["agent_id"]
+    return {"team_id": ident["team_id"], "members": members}
 
 
 # ---------- REST routes ----------
@@ -467,8 +511,9 @@ def _validate_exchange(ex) -> str | None:
 async def push_messages(request: Request) -> JSONResponse:
     """Sync endpoint for the Stop hook. Body matches PushMessagesRequest:
     {"exchanges": [ExchangeWire, ...]} (max 50). Returns {"accepted", "ids"}.
-    Writes one S3 object per exchange; the S3 event drives embedding.
-    Idempotent: the key is derived from session_id + idx, so retries overwrite."""
+    Each exchange is written to S3 and embedded into S3 Vectors by
+    messages.ingest_exchanges. Idempotent: the S3 key and vector id derive from
+    session_id + idx, so retries overwrite."""
     raw = await request.body()
     if len(raw) > MAX_PUSH_BYTES:
         return error(413, "too_large", f"Body exceeds {MAX_PUSH_BYTES} bytes; send smaller batches.")
@@ -489,12 +534,10 @@ async def push_messages(request: Request) -> JSONResponse:
     ident = request.state.raindrop  # set by AuthMiddleware; never trust the body for identity
     received_at = int(time.time())
 
-    def build(ex: dict) -> tuple[str, str, dict]:
-        ex_id = f"{ex['session_id']}:{ex['idx']}"  # recomputed server-side
-        key = (f"teams/{ident['team_id']}/agents/{ident['agent_id']}"
-               f"/sessions/{ex['session_id']}/{ex['idx']}.json")
-        doc = {
-            "id": ex_id,
+    def build(ex: dict) -> dict:
+        """Whitelisted copy of the validated exchange, stamped with the caller's identity."""
+        return {
+            "id": f"{ex['session_id']}:{ex['idx']}",  # recomputed server-side
             "session_id": ex["session_id"],
             "idx": ex["idx"],
             "ts": ex["ts"],
@@ -505,28 +548,19 @@ async def push_messages(request: Request) -> JSONResponse:
             "team_id": ident["team_id"],
             "agent_id": ident["agent_id"],
             "display_name": ident["display_name"],
-            "s3_key": key,
             "received_at": received_at,
         }
-        return ex_id, key, doc
 
-    items = [build(ex) for ex in exchanges]
-
-    def put(item):
-        _, key, doc = item
-        _s3.put_object(Bucket=EXCHANGES_BUCKET, Key=key,
-                       Body=json.dumps(doc).encode(), ContentType="application/json")
-
-    def write_all():
-        with ThreadPoolExecutor(max_workers=10) as pool:
-            list(pool.map(put, items))  # raises if any put fails -> client retries the batch
-
+    docs = [build(ex) for ex in exchanges]
     try:
-        await anyio.to_thread.run_sync(write_all)
+        result = await anyio.to_thread.run_sync(
+            lambda: messages.ingest_exchanges(ident["team_id"], ident["agent_id"], docs))
     except Exception:
         return error(500, "storage_failed", "Could not store exchanges; retry the same batch.")
-
-    return JSONResponse({"accepted": len(items), "ids": [i[0] for i in items]})
+    if not result.get("accepted"):
+        # ingest_exchanges skips exchanges whose S3 write failed; if none made it, tell the client to retry
+        return error(500, "storage_failed", "Could not store exchanges; retry the same batch.")
+    return JSONResponse(result)
 
 
 # ---------- ASGI app ----------

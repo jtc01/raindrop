@@ -11,7 +11,7 @@ from typing import Any, NamedTuple, Sequence
 import boto3
 from botocore.config import Config
 
-from api.config import AWS_REGION, MAX_RETRY_ATTEMPTS, VECTOR_BUCKET_NAME, VECTOR_INDEX_NAME
+from config import AWS_REGION, MAX_RETRY_ATTEMPTS, VECTOR_BUCKET_NAME, VECTOR_INDEX_NAME
 
 logger = logging.getLogger(__name__)
 
