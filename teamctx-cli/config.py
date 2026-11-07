@@ -34,6 +34,25 @@ def save(cfg: dict) -> Path:
     return CONFIG_PATH
 
 
+def delete() -> bool:
+    """Removes the local config (used by `raindrop leave`). Returns True if a file was removed."""
+    try:
+        CONFIG_PATH.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def permissions_ok() -> bool | None:
+    """True if config.json is private to the user. None on Windows, where Unix modes don't apply."""
+    if os.name == "nt":
+        return None
+    try:
+        return (CONFIG_PATH.stat().st_mode & 0o077) == 0
+    except FileNotFoundError:
+        return False
+
+
 def build(api_url: str, resp: dict, display_name: str, focus: str, existing: dict | None) -> dict:
     """Turns a /teams or /join response into a config. Keeps installed tools
     only if rejoining the same team."""

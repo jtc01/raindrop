@@ -4,7 +4,8 @@ Run locally:   uvicorn app:app --port 8080
 MCP endpoint:  http://localhost:8080/mcp
 
 Public routes:  GET /health, POST /teams, POST /join
-Authed routes:  /mcp, POST /messages — require `Authorization: Bearer <key>`
+Authed routes:  /mcp, POST /messages, POST /invite, GET /me, GET /teammates,
+                POST /rotate-key, POST /leave — require `Authorization: Bearer <key>`
 """
 import hashlib
 import json
@@ -17,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import anyio
 import boto3
+from boto3.dynamodb.conditions import Key
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_request
 from starlette.middleware import Middleware
@@ -73,6 +75,22 @@ def create_agent(team_id: str, display_name: str, focus: str) -> dict:
     return {"agent_id": agent_id, "api_key": api_key}
 
 
+def issue_join_code(team_id: str, created_by: str | None = None) -> tuple[str, int]:
+    """Creates a new join code for a team. Only its hash is stored."""
+    code = new_join_code()
+    expires_at = int(time.time()) + JOIN_CODE_TTL_SECONDS
+    item = {
+        "code_hash": sha256(normalize_code(code)),
+        "team_id": team_id,
+        "expires_at": expires_at,
+        "uses": 0,
+    }
+    if created_by:
+        item["created_by"] = created_by
+    join_codes.put_item(Item=item)
+    return code, expires_at
+
+
 def error(status: int, code: str, message: str) -> JSONResponse:
     return JSONResponse({"error": code, "message": message}, status_code=status)
 
@@ -119,6 +137,8 @@ class AuthMiddleware:
             "display_name": agent["display_name"],
             "session_id": headers.get(b"x-session-id", b"").decode() or None,
         }
+        # Internal only (rotate/leave need the caller's key record). Never returned to clients.
+        scope["state"]["raindrop_key_hash"] = agent["key_hash"]
         return await self.app(scope, receive, send)
 
 
@@ -165,17 +185,9 @@ async def create_team(request: Request) -> JSONResponse:
         return error(400, "bad_request", "`name` is required (max 80 chars).")
 
     def work():
-        now = int(time.time())
         team_id = f"team_{uuid.uuid4().hex[:12]}"
-        code = new_join_code()
-        expires_at = now + JOIN_CODE_TTL_SECONDS
-        teams.put_item(Item={"team_id": team_id, "name": name, "created_at": now})
-        join_codes.put_item(Item={
-            "code_hash": sha256(normalize_code(code)),
-            "team_id": team_id,
-            "expires_at": expires_at,
-            "uses": 0,
-        })
+        teams.put_item(Item={"team_id": team_id, "name": name, "created_at": int(time.time())})
+        code, expires_at = issue_join_code(team_id)
         result = {"team_id": team_id, "team_name": name,
                   "join_code": code, "join_code_expires_at": expires_at}
         display_name = (body.get("display_name") or "").strip()
@@ -213,6 +225,101 @@ async def join(request: Request) -> JSONResponse:
 
     result, err = await anyio.to_thread.run_sync(work)
     return err or JSONResponse(result, status_code=201)
+
+
+@mcp.custom_route("/invite", methods=["POST"])
+async def invite(request: Request) -> JSONResponse:
+    """Authed. Issues a fresh join code for the caller's team (any member can invite).
+    Older codes keep working until they expire."""
+    ident = request.state.raindrop  # set by AuthMiddleware
+    code, expires_at = await anyio.to_thread.run_sync(
+        lambda: issue_join_code(ident["team_id"], created_by=ident["agent_id"]))
+    team = await anyio.to_thread.run_sync(
+        lambda: teams.get_item(Key={"team_id": ident["team_id"]}).get("Item") or {})
+    return JSONResponse({"team_id": ident["team_id"], "team_name": team.get("name"),
+                         "join_code": code, "join_code_expires_at": expires_at},
+                        status_code=201)
+
+
+@mcp.custom_route("/me", methods=["GET"])
+async def me(request: Request) -> JSONResponse:
+    """Authed. Returns the caller's identity and team name (used by `raindrop doctor`)."""
+    ident = request.state.raindrop
+    team = await anyio.to_thread.run_sync(
+        lambda: teams.get_item(Key={"team_id": ident["team_id"]}).get("Item") or {})
+    return JSONResponse({"team_id": ident["team_id"], "team_name": team.get("name"),
+                         "agent_id": ident["agent_id"], "display_name": ident["display_name"]})
+
+
+def list_team_members(team_id: str) -> list[dict]:
+    """Active members of a team, oldest first. Shared by GET /teammates and list_teammates."""
+    items, kwargs = [], {"IndexName": "by_team",
+                         "KeyConditionExpression": Key("team_id").eq(team_id)}
+    while True:
+        page = agents.query(**kwargs)
+        items += page.get("Items", [])
+        if "LastEvaluatedKey" not in page:
+            break
+        kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+    members = {}
+    for it in items:
+        if it.get("status") == "active":
+            members[it["agent_id"]] = {
+                "agent_id": it["agent_id"],
+                "display_name": it.get("display_name", ""),
+                "focus": it.get("focus", ""),
+                "joined_at": int(it.get("created_at", 0)),
+            }
+    return sorted(members.values(), key=lambda m: m["joined_at"])
+
+
+@mcp.custom_route("/teammates", methods=["GET"])
+async def teammates(request: Request) -> JSONResponse:
+    """Authed. Lists active members of the caller's team."""
+    ident = request.state.raindrop
+    members = await anyio.to_thread.run_sync(lambda: list_team_members(ident["team_id"]))
+    for m in members:
+        m["you"] = m["agent_id"] == ident["agent_id"]
+    return JSONResponse({"team_id": ident["team_id"], "members": members})
+
+
+def _deactivate(key_hash: str, status: str) -> None:
+    agents.update_item(Key={"key_hash": key_hash},
+                       UpdateExpression="SET #s = :s, deactivated_at = :t",
+                       ExpressionAttributeNames={"#s": "status"},
+                       ExpressionAttributeValues={":s": status, ":t": int(time.time())})
+    _auth_cache.pop(key_hash, None)  # this container stops accepting it immediately
+
+
+@mcp.custom_route("/rotate-key", methods=["POST"])
+async def rotate_key(request: Request) -> JSONResponse:
+    """Authed. Issues a new key for the same agent and revokes the current one.
+    Note: other warm Lambda containers may accept the old key for up to the auth cache TTL."""
+    old_hash = request.state.raindrop_key_hash
+
+    def work():
+        old = agents.get_item(Key={"key_hash": old_hash}).get("Item")
+        if not old or old.get("status") != "active":
+            return None
+        api_key = secrets.token_urlsafe(32)
+        agents.put_item(Item={**old, "key_hash": sha256(api_key), "status": "active",
+                              "created_at": int(time.time()), "rotated_from_at": int(time.time())})
+        _deactivate(old_hash, "revoked")
+        return {"agent_id": old["agent_id"], "team_id": old["team_id"], "api_key": api_key}
+
+    result = await anyio.to_thread.run_sync(work)
+    if not result:
+        return error(401, "unauthorized", "Key is no longer active.")
+    return JSONResponse(result, status_code=201)
+
+
+@mcp.custom_route("/leave", methods=["POST"])
+async def leave(request: Request) -> JSONResponse:
+    """Authed. Deactivates the caller's key; they disappear from teammates.
+    Their already-shared context stays (deleting it is a separate feature)."""
+    ident = request.state.raindrop
+    await anyio.to_thread.run_sync(lambda: _deactivate(request.state.raindrop_key_hash, "left"))
+    return JSONResponse({"left": True, "team_id": ident["team_id"], "agent_id": ident["agent_id"]})
 
 
 MAX_EXCHANGES_PER_PUSH = 50

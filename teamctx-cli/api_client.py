@@ -18,10 +18,20 @@ class ApiError(Exception):
 
 def _post(api_url: str, path: str, body: dict, api_key: str | None = None,
           transport: httpx.BaseTransport | None = None) -> dict:
+    return _request("POST", api_url, path, body, api_key, transport)
+
+
+def _get(api_url: str, path: str, api_key: str | None = None,
+         transport: httpx.BaseTransport | None = None) -> dict:
+    return _request("GET", api_url, path, None, api_key, transport)
+
+
+def _request(method: str, api_url: str, path: str, body: dict | None,
+             api_key: str | None, transport: httpx.BaseTransport | None) -> dict:
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
         with httpx.Client(timeout=TIMEOUT, transport=transport) as client:
-            r = client.post(api_url.rstrip("/") + path, json=body, headers=headers)
+            r = client.request(method, api_url.rstrip("/") + path, json=body, headers=headers)
     except httpx.HTTPError as e:
         raise ApiError(0, "network_error", f"Could not reach {api_url}: {e}") from e
     try:
@@ -37,6 +47,36 @@ def _post(api_url: str, path: str, body: dict, api_key: str | None = None,
 def create_team(api_url: str, name: str, display_name: str, focus: str, **kw) -> dict:
     """POST /teams. The lead is auto-joined, so the response includes api_key."""
     return _post(api_url, "/teams", {"name": name, "display_name": display_name, "focus": focus}, **kw)
+
+
+def invite(api_url: str, api_key: str, **kw) -> dict:
+    """POST /invite (authed). Returns a fresh join_code for the caller's team."""
+    return _post(api_url, "/invite", {}, api_key=api_key, **kw)
+
+
+def health(api_url: str, **kw) -> dict:
+    """GET /health (no auth)."""
+    return _get(api_url, "/health", **kw)
+
+
+def me(api_url: str, api_key: str, **kw) -> dict:
+    """GET /me (authed). Identity the server sees for this key."""
+    return _get(api_url, "/me", api_key=api_key, **kw)
+
+
+def teammates(api_url: str, api_key: str, **kw) -> dict:
+    """GET /teammates (authed). {"team_id", "members": [{agent_id, display_name, focus, joined_at, you}]}"""
+    return _get(api_url, "/teammates", api_key=api_key, **kw)
+
+
+def rotate_key(api_url: str, api_key: str, **kw) -> dict:
+    """POST /rotate-key (authed). Returns the new api_key; the old one is revoked."""
+    return _post(api_url, "/rotate-key", {}, api_key=api_key, **kw)
+
+
+def leave(api_url: str, api_key: str, **kw) -> dict:
+    """POST /leave (authed). Deactivates this key."""
+    return _post(api_url, "/leave", {}, api_key=api_key, **kw)
 
 
 def join(api_url: str, code: str, display_name: str, focus: str, **kw) -> dict:
