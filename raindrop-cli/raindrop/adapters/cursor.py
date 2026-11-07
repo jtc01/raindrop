@@ -9,18 +9,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from stophooks.adapters._common import (
-    Adapter,
-    Change,
-    Cursor,
-    Exchange,
-    ReadResult,
-    SessionRef,
-    ToolRecord,
-    TranscriptError,
-    json_change,
-    validate_session_id,
-)
+from raindrop.adapters._common import json_change, validate_session_id
+from raindrop.adapters.base import Adapter, Change, SessionRef
+from raindrop.errors import TranscriptError
+from raindrop.models import Cursor, Exchange, ReadResult, ToolRecord
 from raindrop import config
 
 HOOK_MARKER = "raindrop sync --tool cursor"
@@ -36,7 +28,7 @@ def _hooks_path() -> Path:
 
 
 def _spool_path(session_id: str) -> Path:
-    return config.CONFIG_DIR / "spools" / "cursor" / f"{session_id}.jsonl"
+    return config.CONFIG_DIR / "spools" / "cursor" / f"{session_id.replace(':', '_')}.jsonl"
 
 
 def _hook_transform(data: dict, install: bool) -> dict:

@@ -19,7 +19,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from raindrop import constants
-from raindrop.errors import ConfigParseError, InstallError
+from raindrop.adapters.base import Change
+from raindrop.errors import ConfigParseError, InstallError, TranscriptError
 
 CLI_NAME = "raindrop"
 
@@ -200,3 +201,35 @@ def summarize_tool(name: object, args: object) -> tuple[str, list[str]]:
         if isinstance(args.get(key), str):
             return f"{name}: {clip(args[key])}", []
     return name, []
+
+
+# ---------------------------------------------------------------------------
+# Helpers for hook-file adapters (Codex, Cursor)
+# ---------------------------------------------------------------------------
+
+
+def json_change(path: Path, description: str, transform: Callable[[dict], dict]) -> Change:
+    """A planned merge into a JSON hooks file: diff preview now, backed-up
+    atomic write on apply (the file is re-read at apply time)."""
+
+    def new_text(text: str) -> str:
+        return dump_json(transform(load_json_text(text, path)))
+
+    old, new = edit_file(path, new_text)
+    return Change(
+        kind="merge",
+        target=str(path),
+        description=description,
+        preview=diff(path, old, new) or "(already installed, no change)",
+        component="hook",
+        _apply=lambda: apply_file_edit(path, "hook", new_text),
+    )
+
+
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def validate_session_id(value: object, tool: str) -> str:
+    if not isinstance(value, str) or not _SESSION_ID_RE.fullmatch(value) or ".." in value:
+        raise TranscriptError(f"Hook payload has no valid {tool} session ID")
+    return value
