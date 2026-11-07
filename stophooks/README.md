@@ -1,28 +1,56 @@
 # Raindrop stop hooks
 
-The hooks are grouped here, but kept as separate scripts because Codex and
-Cursor provide different hook payloads and have different behavior:
+Every tool has the same two parts:
 
-- `claude-code-stop-hook/claude_stop_sync.py` syncs finished Claude Code turns
-  through the CLI's sync pipeline (redaction included). `raindrop tools add
-  claude-code` can also install a hook for you; see that folder's README.
-- `kiro-stop-hook/kiro_stop_sync.py` records Kiro hook events and uploads each
-  finished turn through the CLI's sync pipeline (redaction included). It always
-  exits 0 so it can never block Kiro. `raindrop tools add kiro` can also install
-  the hooks for you; see that folder's README.
-- `codex-stop-hook/stop_sync.py` reads Codex transcript data, redacts it, and
-  uploads completed exchanges to Raindrop.
-- `cursor-stop-hook/capture.py` currently records only the structure of
-  Cursor's hook payload/transcript locally. It does not store prompt text or
-  upload anything yet; we need a real Cursor diagnostic report before writing
-  a transcript parser.
+- an **adapter** inside the installed `raindrop` package (`raindrop-cli/raindrop/adapters/`),
+  which `raindrop tools add <tool>` uses to install the tool's hook, and which `raindrop sync`
+  uses to read the finished turn; and
+- a **standalone script** in this folder, for running the hook straight from a repo checkout
+  without installing anything into the tool. The scripts are not part of the installed package.
 
-The Codex and Cursor **adapters** (`raindrop.adapters.codex` and
-`raindrop.adapters.cursor`) now live inside the installed `raindrop` package in
-`raindrop-cli/raindrop/adapters/`, and are registered in the CLI, so a plain
-`pip install` includes them. What stays in this folder are the standalone
-scripts below; they are not part of the installed package and import it from the
-repo checkout. Neither hook is configured automatically.
+Use one or the other for a given tool, not both, or every turn is synced twice.
+
+| Tool | Install with the CLI | Standalone script | Where the turn comes from |
+|---|---|---|---|
+| Claude Code | `raindrop tools add claude-code` | `claude-code-stop-hook/claude_stop_sync.py` | transcript file |
+| Kiro | `raindrop tools add kiro` | `kiro-stop-hook/kiro_stop_sync.py` | hook events spooled locally |
+| Antigravity | `raindrop tools add antigravity` | `antigravity-stop-hook/antigravity_stop_sync.py` | transcript file |
+| GitHub Copilot | `raindrop tools add copilot` | `copilot-stop-hook/copilot_stop_sync.py` | transcript file |
+| Codex | `raindrop tools add codex` | `codex-stop-hook/stop_sync.py` | transcript file |
+| Cursor | `raindrop tools add cursor` | `cursor-stop-hook/capture.py` (diagnostic only) | hook events spooled locally |
+
+How the hooks behave (the scripts for Claude Code, Kiro, Antigravity and Copilot all go through
+`raindrop.sync_cmd.run_sync`, so they behave the same way; the Codex script repeats the same rules in
+its own code):
+
+- Secrets are redacted locally before anything is uploaded.
+- Only repos you opted in with `raindrop share --repo` upload (or all, after `raindrop share`);
+  `raindrop pause` stops everything. Skipped content is never queued for later.
+- The sync position only advances after the API confirms the upload, so a failed upload is retried.
+- A hook never breaks the agent. Kiro, Antigravity and Copilot hooks always exit 0 and log problems
+  to `~/.raindrop/sync.log`. Antigravity's Stop hook must also answer `{"decision": "allow"}`.
+
+Verification status:
+
+| Tool | Parser/adapter checked against | Hook seen firing in the real app |
+|---|---|---|
+| Claude Code | real transcripts; a manual run of the installed hook uploaded a real session | yes (its cursor advances after real turns) |
+| Antigravity | a real transcript | not yet |
+| GitHub Copilot | real VS Code Copilot Chat transcripts | not yet |
+| Kiro | synthetic events in the tests | not yet |
+| Codex | synthetic transcripts in the tests | not yet |
+| Cursor | none; capture-only until a real report exists | not yet |
+
+Known gaps:
+
+- `raindrop tools add codex` and `cursor` install a hook but not the MCP server, so those tools can
+  share their sessions but not read the team's context. `tests/test_adapter_consistency.py` records this
+  as an expected failure.
+- `codex-stop-hook/stop_sync.py` keeps its own parser and upload code, unlike the scripts above, which
+  all go through `run_sync`. It now honours the sharing settings, but any future change to the shared
+  sync (a new redaction step, say) has to be repeated there.
+- `codex-stop-hook/stop_sync.py` and `cursor-stop-hook/capture.py` predate the `<tool>_stop_sync.py`
+  naming the other four use.
 
 ## 1. Run automated tests
 
@@ -31,7 +59,7 @@ From the Raindrop repository root in PowerShell:
 ```powershell
 py -3 -m unittest discover -s stophooks/codex-stop-hook -p "test_*.py" -v
 py -3 -m unittest discover -s stophooks/cursor-stop-hook -p "test_*.py" -v
-py -3 -m pytest raindrop-cli/tests/test_codex_cursor_adapters.py -v
+py -3 -m pytest raindrop-cli/tests -v
 ```
 
 Each should finish with `OK` (or all tests passed). These are local tests and do not upload any
