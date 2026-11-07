@@ -11,6 +11,58 @@ Resources:
   RaindropApi:
     Type: AWS::Serverless::HttpApi
 
+  TeamsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: raindrop-teams
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: team_id, AttributeType: S }
+      KeySchema:
+        - { AttributeName: team_id, KeyType: HASH }
+
+  JoinCodesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: raindrop-join-codes
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: code_hash, AttributeType: S }
+      KeySchema:
+        - { AttributeName: code_hash, KeyType: HASH }
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  AgentsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: raindrop-agents
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: key_hash, AttributeType: S }
+        - { AttributeName: team_id, AttributeType: S }
+      KeySchema:
+        - { AttributeName: key_hash, KeyType: HASH }
+      GlobalSecondaryIndexes:
+        - IndexName: by_team
+          KeySchema:
+            - { AttributeName: team_id, KeyType: HASH }
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes: [agent_id, display_name, focus, status, created_at]
+
+  # Raw exchanges. The ingestion Lambda subscribes to ObjectCreated events on this bucket.
+  ExchangesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub raindrop-exchanges-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
   RaindropFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -25,6 +77,15 @@ Resources:
           AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap
           PORT: 8080
           AWS_LWA_READINESS_CHECK_PATH: /health
+          TEAMS_TABLE: !Ref TeamsTable
+          JOIN_CODES_TABLE: !Ref JoinCodesTable
+          AGENTS_TABLE: !Ref AgentsTable
+          EXCHANGES_BUCKET: !Ref ExchangesBucket
+      Policies:
+        - S3WritePolicy: { BucketName: !Ref ExchangesBucket }
+        - DynamoDBCrudPolicy: { TableName: !Ref TeamsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref JoinCodesTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AgentsTable }
       Events:
         Root:
           Type: HttpApi
@@ -43,3 +104,6 @@ Outputs:
   ApiUrl:
     Description: Base URL for the raindrop API
     Value: !Sub https://${RaindropApi}.execute-api.${AWS::Region}.amazonaws.com
+  ExchangesBucketName:
+    Description: S3 bucket holding raw exchanges (ingestion reads from here)
+    Value: !Ref ExchangesBucket
