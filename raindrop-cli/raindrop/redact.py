@@ -16,7 +16,10 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import re
+import time
+from pathlib import Path
 from typing import Any, Iterable
 
 REDACTED = "[REDACTED]"
@@ -148,14 +151,52 @@ def _shannon_entropy(s: str) -> float:
     return -sum(c / n * log2(c / n) for c in Counter(s).values())
 
 
+_UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+_SRI_HASH = re.compile(r"sha(?:1|256|384|512)-[A-Za-z0-9+/_\-]+=*")  # package-lock "integrity" values
+
+
+def _is_benign_shape(s: str, before: str) -> bool:
+    """Long random-looking strings that are known not to be secrets."""
+    if re.fullmatch(r"[0-9a-fA-F]+", s):  # git SHAs, md5/sha digests
+        return True
+    if _UUID.fullmatch(s):
+        return True
+    if _SRI_HASH.fullmatch(s):
+        return True
+    if before.endswith("base64,"):  # data: URI payload (images, fonts, ...)
+        return True
+    return False
+
+
+def _log_entropy_hit(s: str) -> None:
+    """Opt-in diagnostics (RAINDROP_REDACT_LOG=1): record the *shape* of what the entropy
+    layer redacted, never the string itself, to ~/.raindrop/redact.log. Never raises."""
+    if os.environ.get("RAINDROP_REDACT_LOG") != "1":
+        return
+    try:
+        home = Path(os.environ.get("RAINDROP_HOME", Path.home() / ".raindrop"))
+        home.mkdir(parents=True, exist_ok=True)
+        shape = "".join(
+            sorted({"U" if c.isupper() else "l" if c.islower() else "9" if c.isdigit() else "-" for c in s})
+        )
+        with (home / "redact.log").open("a", encoding="utf-8") as f:
+            f.write(
+                f"{time.strftime('%Y-%m-%d %H:%M:%S')} high-entropy len={len(s)} "
+                f"entropy={_shannon_entropy(s):.2f} classes={shape}\n"
+            )
+    except Exception:
+        pass
+
+
 def _entropy_sub(m: re.Match[str]) -> str:
     s = m.group(0)
-    if re.fullmatch(r"[0-9a-fA-F]+", s):  # git SHAs, md5/sha digests: not secrets
+    if _is_benign_shape(s, m.string[max(0, m.start() - 8) : m.start()]):
         return s
     if not (re.search(r"\d", s) and re.search(r"[A-Za-z]", s)):
         return s
     if _shannon_entropy(s) < ENTROPY_THRESHOLD:
         return s
+    _log_entropy_hit(s)
     return "[REDACTED:high-entropy]"
 
 
