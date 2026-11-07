@@ -3,9 +3,9 @@
 The hooks are grouped here, but kept as separate scripts because Codex and
 Cursor provide different hook payloads and have different behavior:
 
-- `adapters/codex.py` implements the shared `Adapter` contract for Codex
-  transcripts.
-- `adapters/cursor.py` implements the contract for Cursor hook-event spooling.
+- `claude-code-stop-hook/claude_stop_sync.py` syncs finished Claude Code turns
+  through the CLI's sync pipeline (redaction included). `raindrop tools add
+  claude-code` no longer installs a hook; see that folder's README.
 - `codex-stop-hook/stop_sync.py` reads Codex transcript data, redacts it, and
   uploads completed exchanges to Raindrop.
 - `cursor-stop-hook/capture.py` currently records only the structure of
@@ -13,12 +13,12 @@ Cursor provide different hook payloads and have different behavior:
   upload anything yet; we need a real Cursor diagnostic report before writing
   a transcript parser.
 
-The adapter classes reuse `raindrop-cli` types at runtime but are kept here to
-avoid changing your partner's files. They are **not registered in the CLI**, so
-their planned `raindrop sync --tool ...` hooks will not work until the adapter
-files are merged and registered by whoever owns `raindrop-cli`. The standalone
-Codex script is separately runnable; Cursor's capture script remains
-diagnostic-only. Neither hook is configured automatically.
+The Codex and Cursor **adapters** (`raindrop.adapters.codex` and
+`raindrop.adapters.cursor`) now live inside the installed `raindrop` package in
+`raindrop-cli/raindrop/adapters/`, and are registered in the CLI, so a plain
+`pip install` includes them. What stays in this folder are the standalone
+scripts below; they are not part of the installed package and import it from the
+repo checkout. Neither hook is configured automatically.
 
 ## 1. Run automated tests
 
@@ -27,10 +27,10 @@ From the Raindrop repository root in PowerShell:
 ```powershell
 py -3 -m unittest discover -s stophooks/codex-stop-hook -p "test_*.py" -v
 py -3 -m unittest discover -s stophooks/cursor-stop-hook -p "test_*.py" -v
-py -3 -m unittest discover -s stophooks/adapters -p "test_*.py" -v
+py -3 -m pytest raindrop-cli/tests/test_codex_cursor_adapters.py -v
 ```
 
-Each should finish with `OK`. These are local tests and do not upload any
+Each should finish with `OK` (or all tests passed). These are local tests and do not upload any
 conversation data.
 
 ## 2. Test Cursor locally
@@ -67,5 +67,5 @@ Cursor reloaded the hooks configuration.
 
 Cursor's diagnostic hook is not a Cursor sync implementation. Do not expect
 Cursor conversations to appear in Raindrop yet. The Cursor adapter is a
-testable prototype; it still needs real hook-payload validation and CLI
-registration before live sync can be tested.
+testable prototype; it is registered in the CLI but still needs real hook-payload
+validation before live sync can be tested.

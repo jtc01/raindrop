@@ -5,7 +5,9 @@ Claude Code adapter.
 Install side:
   - MCP:   `claude mcp add --scope user raindrop -- raindrop proxy`, or a merge
            into ~/.claude.json when the `claude` binary isn't on PATH.
-  - Hook:  a Stop hook in ~/.claude/settings.json that runs `raindrop sync`.
+  - Hook:  NOT installed here. The Stop hook is the standalone script in
+           stophooks/claude-code-stop-hook/ (see its README). uninstall() still
+           removes a hook that an older version of this adapter installed.
   - Rules: a delimited block appended to ~/.claude/CLAUDE.md.
 
 Extraction side: tails Claude Code's JSONL transcript. The cursor is a byte
@@ -31,7 +33,9 @@ from raindrop.adapters._common import (
     diff,
     dump_json,
     edit_file,
+    display_cmd,
     exe,
+    is_our_hook_command,
     load_json_text,
     summarize_tool,
 )
@@ -45,10 +49,6 @@ _NOISE_PREFIXES = (
     "<local-command-caveat>",
     "[Request interrupted by user",
 )
-
-
-def _hook_command() -> str:
-    return f"{exe()} sync --tool claude-code"
 
 
 # ---------------------------------------------------------------------------
@@ -80,21 +80,10 @@ def _remove_mcp_from_json(text: str, path: Path) -> str:
 
 def _is_ours(group: object) -> bool:
     return isinstance(group, dict) and any(
-        constants.HOOK_MARKER in str(h.get("command", ""))
+        is_our_hook_command(h.get("command", ""))
         for h in group.get("hooks", [])
         if isinstance(h, dict)
     )
-
-
-def _add_hook(text: str, path: Path) -> str:
-    data = load_json_text(text, path)
-    hooks = data.setdefault("hooks", {})
-    stop = [g for g in hooks.get("Stop", []) if not _is_ours(g)]
-    stop.append(
-        {"hooks": [{"type": "command", "command": _hook_command(), "timeout": 60}]}
-    )
-    hooks["Stop"] = stop
-    return dump_json(data)
 
 
 def _remove_hook(text: str, path: Path) -> str:
@@ -238,17 +227,20 @@ class ClaudeCodeAdapter(Adapter):
         return shutil.which("claude") is not None or constants.claude_dir().is_dir()
 
     def plan_install(self, rules: bool) -> list[Change]:
-        changes = [self._plan_mcp(), self._plan_hook()]
+        changes = [self._plan_mcp()]
         if rules:
             changes.append(self._plan_rules())
         return changes
 
     def _plan_mcp(self) -> Change:
         server = constants.MCP_SERVER_NAME
-        if shutil.which("claude"):
+        claude = shutil.which("claude")
+        if claude:
             self._mcp_method = "cli"
-            add = ["claude", "mcp", "add", "--scope", "user", server, "--", exe(), "proxy"]
-            remove = ["claude", "mcp", "remove", "--scope", "user", server]
+            # Full path from which(): on Windows `claude` is often a .cmd shim
+            # that a bare name can't launch.
+            add = [claude, "mcp", "add", "--scope", "user", server, "--", exe(), "proxy"]
+            remove = [claude, "mcp", "remove", "--scope", "user", server]
 
             def run() -> None:
                 # Remove first so re-running install replaces rather than errors.
@@ -261,7 +253,7 @@ class ClaudeCodeAdapter(Adapter):
                 kind="cmd",
                 target="claude",
                 description=f"Register '{server}' MCP server with Claude Code (user scope)",
-                preview=" ".join(add),
+                preview=display_cmd(["claude", *add[1:]]),
                 component="mcp",
                 _apply=run,
             )
@@ -278,18 +270,6 @@ class ClaudeCodeAdapter(Adapter):
             _apply=lambda: apply_file_edit(
                 path, "mcp", lambda t: _add_mcp_to_json(t, path)
             ),
-        )
-
-    def _plan_hook(self) -> Change:
-        path = constants.claude_settings_path()
-        old, new = edit_file(path, lambda t: _add_hook(t, path))
-        return Change(
-            kind="merge",
-            target=str(path),
-            description="Add Stop hook that syncs each finished turn to your team",
-            preview=diff(path, old, new) or "(already installed, no change)",
-            component="hook",
-            _apply=lambda: apply_file_edit(path, "hook", lambda t: _add_hook(t, path)),
         )
 
     def _plan_rules(self) -> Change:
@@ -313,16 +293,17 @@ class ClaudeCodeAdapter(Adapter):
     def uninstall(self, record: ToolRecord) -> None:
         if record.get("mcp"):
             method = (record.get("extra") or {}).get("mcp_method", "cli")
-            if method == "cli" and shutil.which("claude"):
+            claude = shutil.which("claude")
+            if method == "cli" and claude:
                 subprocess.run(
-                    ["claude", "mcp", "remove", "--scope", "user", constants.MCP_SERVER_NAME],
+                    [claude, "mcp", "remove", "--scope", "user", constants.MCP_SERVER_NAME],
                     capture_output=True,
                     text=True,
                 )
             else:
                 path = constants.claude_json_path()
                 apply_file_edit(path, "mcp", lambda t: _remove_mcp_from_json(t, path))
-        if record.get("hook"):
+        if record.get("hook"):  # legacy: installed by an older version
             path = constants.claude_settings_path()
             apply_file_edit(path, "hook", lambda t: _remove_hook(t, path))
         if record.get("rules"):

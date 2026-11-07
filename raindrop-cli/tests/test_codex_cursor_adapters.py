@@ -6,9 +6,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from stophooks.adapters._common import SessionRef
-from stophooks.adapters.codex import CodexAdapter
-from stophooks.adapters.cursor import CursorAdapter
+from raindrop.adapters.base import SessionRef
+from raindrop.adapters.codex import CodexAdapter
+from raindrop.adapters.cursor import CursorAdapter
 
 
 class CodexAdapterTests(unittest.TestCase):
@@ -78,7 +78,7 @@ class CodexAdapterTests(unittest.TestCase):
                 }
             }), encoding="utf-8")
             adapter = CodexAdapter()
-            with patch("stophooks.adapters.codex._hooks_path", return_value=path):
+            with patch("raindrop.adapters.codex._hooks_path", return_value=path):
                 adapter.plan_install(rules=False)[0].run()
                 adapter.plan_install(rules=False)[0].run()
             hooks = json.loads(path.read_text(encoding="utf-8"))["hooks"]["Stop"]
@@ -119,7 +119,7 @@ class CursorAdapterTests(unittest.TestCase):
                 "hook_event_name": "beforeSubmitPrompt",
                 "prompt": "wait for the answer",
             }
-            with patch("stophooks.adapters.cursor._spool_path", return_value=spool):
+            with patch("raindrop.adapters.cursor._spool_path", return_value=spool):
                 adapter.capture(payload)
                 pending = adapter.read_new(SessionRef("conversation-1", None, temp), 0)
                 adapter.capture({
@@ -143,7 +143,7 @@ class CursorAdapterTests(unittest.TestCase):
             spool = Path(temp) / "cursor.jsonl"
             adapter = CursorAdapter()
             payload_base = {"conversation_id": "conversation-1", "cwd": temp}
-            with patch("stophooks.adapters.cursor._spool_path", return_value=spool):
+            with patch("raindrop.adapters.cursor._spool_path", return_value=spool):
                 adapter.capture({
                     **payload_base,
                     "hook_event_name": "beforeSubmitPrompt",
@@ -181,7 +181,7 @@ class CursorAdapterTests(unittest.TestCase):
                 },
             }), encoding="utf-8")
             adapter = CursorAdapter()
-            with patch("stophooks.adapters.cursor._hooks_path", return_value=path):
+            with patch("raindrop.adapters.cursor._hooks_path", return_value=path):
                 adapter.plan_install(rules=False)[0].run()
                 adapter.plan_install(rules=False)[0].run()
             data = json.loads(path.read_text(encoding="utf-8"))

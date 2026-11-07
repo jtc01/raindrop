@@ -17,6 +17,7 @@ KEY = "rd_supersecretkey_1234567890abcdef"
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setattr("shutil.which", lambda name: None)
     monkeypatch.setattr(config, "CONFIG_DIR", tmp_path / ".raindrop")
     monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / ".raindrop" / "config.json")
@@ -44,15 +45,14 @@ def test_tools_add_dry_run_then_add_then_remove(env):
 
     r = runner.invoke(cli.app, ["tools", "add", "claude-code", "--yes", "--rules"])
     assert r.exit_code == 0, r.output
-    assert "Claude Code ✓ MCP + auto-sync hook + rules" in r.output
+    assert "Claude Code ✓ MCP + rules" in r.output
     cfg = config.load()
-    assert cfg["tools"]["claude-code"]["hook"] is True
+    assert cfg["tools"]["claude-code"]["hook"] is False
     assert cfg["tools"]["claude-code"]["extra"]["mcp_method"] == "file"
-    assert constants.HOOK_MARKER in constants.claude_settings_path().read_text()
+    assert not constants.claude_settings_path().exists()  # no Stop hook installed by the CLI
 
     r = runner.invoke(cli.app, ["tools", "remove", "claude-code"])
     assert r.exit_code == 0 and config.load()["tools"] == {}
-    assert constants.HOOK_MARKER not in constants.claude_settings_path().read_text()
 
 
 def test_tools_add_requires_join(env):

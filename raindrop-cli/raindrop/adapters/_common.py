@@ -10,13 +10,17 @@ from __future__ import annotations
 import difflib
 import json
 import os
+import re
+import shlex
 import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable
 
 from raindrop import constants
-from raindrop.errors import ConfigParseError, InstallError
+from raindrop.adapters.base import Change
+from raindrop.errors import ConfigParseError, InstallError, TranscriptError
 
 CLI_NAME = "raindrop"
 
@@ -37,8 +41,41 @@ PATH_KEYS = ("file_path", "notebook_path", "path", "filename")
 
 def exe() -> str:
     """Absolute path to the CLI if we can find it. Hooks may run with a
-    different PATH than the user's shell. Must still contain the marker."""
+    different PATH than the user's shell. On Windows this ends in `.EXE`."""
     return shutil.which(CLI_NAME) or CLI_NAME
+
+
+def is_windows() -> bool:
+    return os.name == "nt"
+
+
+def quote_cmd(path: str, windows: bool | None = None) -> str:
+    """Quote an executable path for a hook command line (a string a shell runs).
+
+    POSIX: shell quoting. Windows: forward slashes (also safe in Git Bash, which
+    Claude Code uses there) and double quotes only when the path needs them.
+    """
+    if windows is None:
+        windows = is_windows()
+    if not windows:
+        return shlex.quote(path)
+    path = path.replace("\\", "/")
+    return f'"{path}"' if re.search(r"[\s&()^%!;,]", path) else path
+
+
+def display_cmd(args: list[str], windows: bool | None = None) -> str:
+    """Printable form of a command, for install previews."""
+    if windows is None:
+        windows = is_windows()
+    return subprocess.list2cmdline(args) if windows else shlex.join(args)
+
+
+# Matches `raindrop sync`, `/x/raindrop sync`, `"C:/a b/raindrop.EXE" sync`, ...
+_HOOK_RE = re.compile(r"raindrop(\.exe)?['\"]?\s+sync\b", re.IGNORECASE)
+
+
+def is_our_hook_command(command: object) -> bool:
+    return bool(_HOOK_RE.search(str(command)))
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +85,7 @@ def exe() -> str:
 
 def read_text(path: Path) -> str:
     try:
-        return path.read_text()
+        return path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return ""
 
@@ -66,13 +103,13 @@ def load_json_text(text: str, path: Path) -> dict:
 
 
 def dump_json(data: dict) -> str:
-    return json.dumps(data, indent=2) + "\n"
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
 def write_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".raindrop-tmp")
-    tmp.write_text(text)
+    tmp.write_text(text, encoding="utf-8")
     if path.exists():
         shutil.copymode(path, tmp)
     os.replace(tmp, path)
@@ -164,3 +201,35 @@ def summarize_tool(name: object, args: object) -> tuple[str, list[str]]:
         if isinstance(args.get(key), str):
             return f"{name}: {clip(args[key])}", []
     return name, []
+
+
+# ---------------------------------------------------------------------------
+# Helpers for hook-file adapters (Codex, Cursor)
+# ---------------------------------------------------------------------------
+
+
+def json_change(path: Path, description: str, transform: Callable[[dict], dict]) -> Change:
+    """A planned merge into a JSON hooks file: diff preview now, backed-up
+    atomic write on apply (the file is re-read at apply time)."""
+
+    def new_text(text: str) -> str:
+        return dump_json(transform(load_json_text(text, path)))
+
+    old, new = edit_file(path, new_text)
+    return Change(
+        kind="merge",
+        target=str(path),
+        description=description,
+        preview=diff(path, old, new) or "(already installed, no change)",
+        component="hook",
+        _apply=lambda: apply_file_edit(path, "hook", new_text),
+    )
+
+
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def validate_session_id(value: object, tool: str) -> str:
+    if not isinstance(value, str) or not _SESSION_ID_RE.fullmatch(value) or ".." in value:
+        raise TranscriptError(f"Hook payload has no valid {tool} session ID")
+    return value

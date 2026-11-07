@@ -1,4 +1,4 @@
-"""Codex adapter prototype, kept separate from raindrop-cli."""
+"""Codex adapter: reads Codex transcripts via its Stop hook."""
 
 from __future__ import annotations
 
@@ -9,18 +9,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from stophooks.adapters._common import (
-    Adapter,
-    Change,
-    Cursor,
-    Exchange,
-    ReadResult,
-    SessionRef,
-    ToolRecord,
-    TranscriptError,
-    json_change,
-    validate_session_id,
-)
+from raindrop.adapters._common import json_change, validate_session_id
+from raindrop.adapters.base import Adapter, Change, SessionRef
+from raindrop.errors import TranscriptError
+from raindrop.models import Cursor, Exchange, ReadResult, ToolRecord
 
 HOOK_MARKER = "raindrop sync --tool codex"
 

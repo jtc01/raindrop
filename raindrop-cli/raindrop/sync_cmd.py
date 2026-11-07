@@ -33,7 +33,8 @@ SAFE_SESSION_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 def _cursor_path(tool: str, session_id: str) -> Path:
     if not SAFE_SESSION_ID.fullmatch(session_id) or ".." in session_id:
         raise RaindropError(f"Refusing unsafe session_id: {session_id!r}")
-    return config.CONFIG_DIR / "cursors" / tool / session_id
+    # ":" is legal in session ids but not in Windows filenames.
+    return config.CONFIG_DIR / "cursors" / tool / session_id.replace(":", "_")
 
 
 def _load_cursor(path: Path) -> int:
@@ -89,7 +90,7 @@ def run_sync(payload: dict, tool: str, transport: httpx.BaseTransport | None = N
 def _log_failure(message: str) -> None:
     try:
         config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        with (config.CONFIG_DIR / "sync.log").open("a") as f:
+        with (config.CONFIG_DIR / "sync.log").open("a", encoding="utf-8") as f:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
     except OSError:
         pass
