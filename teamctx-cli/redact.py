@@ -84,6 +84,8 @@ _AUTH_HEADER = re.compile(
 _NOT_A_SECRET = re.compile(
     r"""^(?:
         (?:true|false|none|null|nil|undefined|string|str|int|bool|required|optional)
+        | (?:bearer|basic|token|digest)   # auth scheme word, not the credential
+        | //.*                            # tail of a URL (e.g. credential.https://host)
         | [A-Za-z_][A-Za-z0-9_.]*\(.*     # function call
         | \$\{?[A-Za-z_][A-Za-z0-9_]*\}?  # ${ENV_VAR} / $ENV_VAR reference
         | <[^>]*>                          # <placeholder>
