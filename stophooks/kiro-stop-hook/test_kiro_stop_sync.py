@@ -44,7 +44,7 @@ class KiroStopSyncTests(unittest.TestCase):
         def handler(request: httpx.Request) -> httpx.Response:
             body = json.loads(request.content)
             self.sent.append(body)
-            return httpx.Response(200, json={"accepted": len(body["exchanges"])})
+            return httpx.Response(200, json={"accepted": len(body["exchanges"]), "ids": [e["id"] for e in body["exchanges"]]})
 
         self.transport = httpx.MockTransport(handler)
 

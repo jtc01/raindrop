@@ -56,7 +56,7 @@ class CopilotStopSyncTests(unittest.TestCase):
 
         def handler(request: httpx.Request) -> httpx.Response:
             sent.append(json.loads(request.content))
-            return httpx.Response(200, json={"accepted": len(sent[-1]["exchanges"])})
+            return httpx.Response(200, json={"accepted": len(sent[-1]["exchanges"]), "ids": [e["id"] for e in sent[-1]["exchanges"]]})
 
         transport = httpx.MockTransport(handler)
         payload = {"sessionId": SID, "transcriptPath": str(self.transcript()), "cwd": str(self.home)}

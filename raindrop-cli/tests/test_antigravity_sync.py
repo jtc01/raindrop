@@ -132,7 +132,7 @@ def test_sync_redacts_and_uploads_once(env):
 
     def handler(req):
         sent.append(json.loads(req.content))
-        return httpx.Response(200, json={"accepted": len(sent[-1]["exchanges"])})
+        return httpx.Response(200, json={"accepted": len(sent[-1]["exchanges"]), "ids": [e["id"] for e in sent[-1]["exchanges"]]})
 
     transport = httpx.MockTransport(handler)
     assert sync_cmd.run_sync(payload(p), "antigravity", transport) == 1
