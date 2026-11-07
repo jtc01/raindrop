@@ -1,1 +1,1 @@
-"""Adapters kept outside teamctx-cli to avoid colliding with ongoing CLI work."""
+"""Adapters kept outside raindrop-cli to avoid colliding with ongoing CLI work."""

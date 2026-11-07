@@ -1,15 +1,15 @@
-"""Local secret redaction for teamctx.
+"""Local secret redaction for raindrop.
 
-Runs on the client during `teamctx sync`, before anything is POSTed to push_messages.
+Runs on the client during `raindrop sync`, before anything is POSTed to push_messages.
 Three layers, applied in order:
 
-1. Known values  - exact secrets we already know (e.g. the teamctx key in config.json).
+1. Known values  - exact secrets we already know (e.g. the raindrop key in config.json).
 2. Key-value     - `api_key = "..."`, `Authorization: Bearer ...`, `password: ...`, env-style lines.
 3. Known formats - provider token shapes (AWS, GitHub, Stripe, OpenAI, Anthropic, ...), JWTs,
                    PEM private keys, credentials embedded in URLs.
 
 Usage:
-    from redact import redact, redact_obj
+    from raindrop.redact import redact, redact_obj
     clean = redact(text, known_secrets=[cfg["key"]])
     clean_exchange = redact_obj(exchange, known_secrets=[cfg["key"]])
 """
@@ -190,7 +190,7 @@ def load_env_secrets(path) -> list[str]:
 def redact(text: str, known_secrets: Iterable[str] = ()) -> str:
     """Return `text` with secrets replaced by `[REDACTED]` markers.
 
-    `known_secrets` are exact values to scrub wherever they appear (e.g. the local teamctx key,
+    `known_secrets` are exact values to scrub wherever they appear (e.g. the local raindrop key,
     or values from the user's .env). Values shorter than MIN_KNOWN_SECRET_LEN are ignored.
     """
     if not text:

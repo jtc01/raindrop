@@ -13,10 +13,10 @@ Cursor provide different hook payloads and have different behavior:
   upload anything yet; we need a real Cursor diagnostic report before writing
   a transcript parser.
 
-The adapter classes reuse `teamctx-cli` types at runtime but are kept here to
+The adapter classes reuse `raindrop-cli` types at runtime but are kept here to
 avoid changing your partner's files. They are **not registered in the CLI**, so
 their planned `raindrop sync --tool ...` hooks will not work until the adapter
-files are merged and registered by whoever owns `teamctx-cli`. The standalone
+files are merged and registered by whoever owns `raindrop-cli`. The standalone
 Codex script is separately runnable; Cursor's capture script remains
 diagnostic-only. Neither hook is configured automatically.
 

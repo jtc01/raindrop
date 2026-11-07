@@ -1,6 +1,6 @@
-"""teamctx/constants.py
+"""raindrop/constants.py
 
-Paths and fixed strings used across teamctx.
+Paths and fixed strings used across raindrop.
 
 Paths are functions, not module-level constants, so they are computed when
 called. That way tests can point HOME at a temp directory and nothing touches
@@ -12,24 +12,24 @@ from __future__ import annotations
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# teamctx's own files
+# raindrop's own files
 # ---------------------------------------------------------------------------
 
 
-def teamctx_home() -> Path:
+def raindrop_home() -> Path:
     return Path.home() / ".raindrop"
 
 
 def config_path() -> Path:
-    return teamctx_home() / "config.json"
+    return raindrop_home() / "config.json"
 
 
 def cursor_dir() -> Path:
-    return teamctx_home() / "cursors"
+    return raindrop_home() / "cursors"
 
 
 def log_path() -> Path:
-    return teamctx_home() / "sync.log"
+    return raindrop_home() / "sync.log"
 
 
 # ---------------------------------------------------------------------------

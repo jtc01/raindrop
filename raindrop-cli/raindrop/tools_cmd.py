@@ -1,16 +1,16 @@
 """`raindrop tools add|remove|list`: install the MCP + hook into a coding tool.
 
-Generic over adapters (teamctx/adapters/registry.py). Registered on the main
+Generic over adapters (raindrop/adapters/registry.py). Registered on the main
 app in cli.py with `app.add_typer(tools_cmd.app, name="tools")`.
 """
 from __future__ import annotations
 
 import typer
 
-import config
-from teamctx.adapters import registry
-from teamctx.adapters.base import Adapter
-from teamctx.errors import NotJoinedError, TeamctxError, ToolNotDetectedError
+from raindrop import config
+from raindrop.adapters import registry
+from raindrop.adapters.base import Adapter
+from raindrop.errors import NotJoinedError, RaindropError, ToolNotDetectedError
 
 app = typer.Typer(help="Install or remove Raindrop in your coding tools.", no_args_is_help=True)
 
@@ -31,7 +31,7 @@ def _summary(adapter: Adapter, status) -> str:
 def _run(fn):
     try:
         fn()
-    except TeamctxError as e:
+    except RaindropError as e:
         typer.secho(f"Error: {e}", fg="red", err=True)
         raise typer.Exit(1)
 

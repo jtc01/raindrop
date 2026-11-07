@@ -1,12 +1,12 @@
-"""Shared types for teamctx.
+"""Shared types for raindrop.
 
 Anything that crosses a module boundary lives here so that sync.py,
 api_client.py, redact.py, config.py, cli.py and the adapters can all import
 the same definitions without importing from each other.
 
 Adapter-only types (Adapter, Change, InstallStatus, SessionRef) live in
-teamctx/adapters/base.py. Hook/transcript payload shapes live in
-teamctx/adapters/payloads.py.
+raindrop/adapters/base.py. Hook/transcript payload shapes live in
+raindrop/adapters/payloads.py.
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ class PushMessagesResponse(TypedDict):
 
 
 # ---------------------------------------------------------------------------
-# Config types (~/.teamctx/config.json)
+# Config types (~/.raindrop/config.json)
 # ---------------------------------------------------------------------------
 
 
@@ -99,7 +99,7 @@ class ToolRecord(TypedDict):
     extra: dict  # adapter-specific, e.g. {"mcp_method": "cli"}
 
 
-class TeamctxConfig(TypedDict):
+class RaindropConfig(TypedDict):
     api_url: str
     api_key: str  # shown once at join, file is chmod 0600
     agent_id: str

@@ -1,4 +1,4 @@
-"""teamctx/adapters/registry.py
+"""raindrop/adapters/registry.py
 
 Maps tool names to adapter classes.
 
@@ -13,12 +13,13 @@ from __future__ import annotations
 
 from importlib import import_module
 
-from teamctx.adapters.base import Adapter
-from teamctx.errors import UnknownToolError
+from raindrop.adapters.base import Adapter
+from raindrop.errors import UnknownToolError
 
 ADAPTERS: dict[str, str] = {
-    "claude-code": "teamctx.adapters.claude:ClaudeCodeAdapter",
-    # "cursor": "teamctx.adapters.cursor:CursorAdapter",
+    "claude-code": "raindrop.adapters.claude:ClaudeCodeAdapter",
+    "kiro": "raindrop.adapters.kiro:KiroAdapter",
+    # "cursor": "raindrop.adapters.cursor:CursorAdapter",
 }
 
 

@@ -1,6 +1,6 @@
 """Local Raindrop config: ~/.raindrop/config.json (0600, dir 0700).
 
-Keys match TeamctxConfig in models.py: api_url, api_key, agent_id, team_id,
+Keys match RaindropConfig in models.py: api_url, api_key, agent_id, team_id,
 display_name, focus, tools. Also stores team_name for display.
 """
 from __future__ import annotations

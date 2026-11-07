@@ -20,16 +20,18 @@ import os
 
 import typer
 
-import api_client
-import config
-import sync_cmd
-import tools_cmd
+from raindrop import api_client
+from raindrop import config
+from raindrop import proxy_cmd
+from raindrop import sync_cmd
+from raindrop import tools_cmd
 
 DEFAULT_API_URL = "https://ze93w3lhua.execute-api.us-east-1.amazonaws.com"
 
 app = typer.Typer(help="Raindrop: share agent context with your team.", no_args_is_help=True)
 app.add_typer(tools_cmd.app, name="tools")
 app.command("sync")(sync_cmd.sync)
+app.command("proxy")(proxy_cmd.proxy)
 
 
 def _api_url(override: str | None) -> str:

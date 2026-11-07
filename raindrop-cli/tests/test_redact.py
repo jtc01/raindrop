@@ -1,6 +1,6 @@
 import unittest
 
-from redact import REDACTED, redact, redact_obj
+from raindrop.redact import REDACTED, redact, redact_obj
 
 
 class RedactTests(unittest.TestCase):
@@ -118,7 +118,7 @@ class EntropyAndEnvTests(unittest.TestCase):
     def test_load_env_secrets(self):
         import tempfile
         from pathlib import Path
-        from redact import load_env_secrets
+        from raindrop.redact import load_env_secrets
 
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / ".env").write_text(

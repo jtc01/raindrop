@@ -1,4 +1,4 @@
-# teamctx secret redaction
+# raindrop secret redaction
 
 `redact.py` scrubs secrets (API keys, tokens, passwords) from text **locally**, so they can be
 removed before data is uploaded to the cloud.
@@ -11,7 +11,7 @@ Pure Python standard library, no dependencies.
 
 | # | Layer | What it catches | Example result |
 |---|-------|-----------------|----------------|
-| 1 | **Known values** | Exact secrets you pass in (e.g. the teamctx key, values from `.env`) | `[REDACTED]` |
+| 1 | **Known values** | Exact secrets you pass in (e.g. the raindrop key, values from `.env`) | `[REDACTED]` |
 | 2 | **Known formats** | Anthropic, OpenAI, AWS, GitHub, GitLab, Slack, Stripe, Google, npm, SendGrid keys; JWTs; PEM private key blocks; passwords inside URLs | `[REDACTED:anthropic-key]`, `postgres://admin:[REDACTED]@host` |
 | 3 | **Key-value pairs** | Values after names like `api_key`, `secret`, `token`, `password`, `Authorization: Bearer ...`, `.env` lines | `db_password = [REDACTED]` |
 | 4 | **High entropy** | Long (32+ char) random-looking strings with no label | `[REDACTED:high-entropy]` |
@@ -30,9 +30,9 @@ Design notes:
 ## Usage
 
 ```python
-from redact import redact, redact_obj, load_env_secrets
+from raindrop.redact import redact, redact_obj, load_env_secrets
 
-# Secrets we know exactly: the teamctx key from ~/.teamctx/config.json,
+# Secrets we know exactly: the raindrop key from ~/.raindrop/config.json,
 # plus secret-looking values from the project's .env files.
 known = [cfg["key"]] + load_env_secrets(project_root)
 

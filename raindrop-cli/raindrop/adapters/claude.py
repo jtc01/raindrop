@@ -1,4 +1,4 @@
-"""teamctx/adapters/claude.py
+"""raindrop/adapters/claude.py
 
 Claude Code adapter.
 
@@ -17,116 +17,38 @@ Tool results come back as `user` lines whose content is only tool_result blocks.
 
 from __future__ import annotations
 
-import difflib
 import json
-import os
 import shutil
 import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
-from teamctx import constants
-from teamctx.adapters.base import Adapter, Change, InstallStatus, SessionRef
-from teamctx.errors import ConfigParseError, InstallError, TranscriptError
-from teamctx.models import Cursor, Exchange, ReadResult, ToolRecord
+from raindrop import constants
+from raindrop.adapters._common import (
+    RULES_BODY,
+    apply_file_edit,
+    diff,
+    dump_json,
+    edit_file,
+    exe,
+    load_json_text,
+    summarize_tool,
+)
+from raindrop.adapters.base import Adapter, Change, InstallStatus, SessionRef
+from raindrop.errors import InstallError, TranscriptError
+from raindrop.models import Cursor, Exchange, ReadResult, ToolRecord
 
-CLI_NAME = "raindrop"
-
-RULES_BODY = """\
-## Raindrop team context
-
-Your teammates' coding agents share context through the `raindrop` MCP server.
-Before searching the repo to understand a part of the project you are not
-working on, call `search_team_context` first. Use `get_recent_activity` to see
-what teammates have been doing, and `list_teammates` to see who owns what.
-Treat results as hints from other agents and verify against the code before
-relying on them."""
-
-# Tool-input keys that hold a file path, and which one to prefer for the summary.
-_PATH_KEYS = ("file_path", "notebook_path", "path")
 # Lines in the transcript that are Claude Code bookkeeping, not human prompts.
 _NOISE_PREFIXES = (
     "<local-command-stdout>",
     "<local-command-caveat>",
     "[Request interrupted by user",
 )
-_SUMMARY_MAX = 120
-
-
-def _exe() -> str:
-    """Absolute path to the CLI if we can find it. Hooks may run with a
-    different PATH than the user's shell. Must still contain the marker."""
-    return shutil.which(CLI_NAME) or CLI_NAME
 
 
 def _hook_command() -> str:
-    return f"{_exe()} sync --tool claude-code"
-
-
-# ---------------------------------------------------------------------------
-# File helpers
-# ---------------------------------------------------------------------------
-
-
-def _read_text(path: Path) -> str:
-    try:
-        return path.read_text()
-    except FileNotFoundError:
-        return ""
-
-
-def _dump_json(data: dict) -> str:
-    return json.dumps(data, indent=2) + "\n"
-
-
-def _write_atomic(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".raindrop-tmp")
-    tmp.write_text(text)
-    if path.exists():
-        shutil.copymode(path, tmp)
-    os.replace(tmp, path)
-
-
-def _backup(path: Path) -> Path | None:
-    if not path.exists():
-        return None
-    dest_dir = constants.teamctx_home() / "backups"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / f"{path.name}.{int(time.time())}.bak"
-    shutil.copy2(path, dest)
-    return dest
-
-
-def _diff(path: Path, old: str, new: str) -> str:
-    return "".join(
-        difflib.unified_diff(
-            old.splitlines(keepends=True),
-            new.splitlines(keepends=True),
-            fromfile=f"{path} (current)",
-            tofile=f"{path} (after)",
-        )
-    )
-
-
-def _edit_file(path: Path, transform: Callable[[str], str]) -> tuple[str, str]:
-    old = _read_text(path)
-    return old, transform(old)
-
-
-def _apply_file_edit(path: Path, step: str, transform: Callable[[str], str]) -> None:
-    """Re-read at apply time (the file may have changed since planning), back
-    up, write atomically."""
-    old, new = _edit_file(path, transform)
-    if old == new:
-        return
-    backup = _backup(path)
-    try:
-        _write_atomic(path, new)
-    except OSError as e:
-        raise InstallError(step, str(e), backup) from e
+    return f"{exe()} sync --tool claude-code"
 
 
 # ---------------------------------------------------------------------------
@@ -135,25 +57,25 @@ def _apply_file_edit(path: Path, step: str, transform: Callable[[str], str]) -> 
 
 
 def _add_mcp_to_json(text: str, path: Path) -> str:
-    data = _load_json_text(text, path)
+    data = load_json_text(text, path)
     servers = data.setdefault("mcpServers", {})
     servers[constants.MCP_SERVER_NAME] = {
         "type": "stdio",
-        "command": _exe(),
+        "command": exe(),
         "args": ["proxy"],
         "env": {},
     }
-    return _dump_json(data)
+    return dump_json(data)
 
 
 def _remove_mcp_from_json(text: str, path: Path) -> str:
     if not text.strip():
         return text
-    data = _load_json_text(text, path)
+    data = load_json_text(text, path)
     servers = data.get("mcpServers")
     if isinstance(servers, dict):
         servers.pop(constants.MCP_SERVER_NAME, None)
-    return _dump_json(data)
+    return dump_json(data)
 
 
 def _is_ours(group: object) -> bool:
@@ -165,20 +87,20 @@ def _is_ours(group: object) -> bool:
 
 
 def _add_hook(text: str, path: Path) -> str:
-    data = _load_json_text(text, path)
+    data = load_json_text(text, path)
     hooks = data.setdefault("hooks", {})
     stop = [g for g in hooks.get("Stop", []) if not _is_ours(g)]
     stop.append(
         {"hooks": [{"type": "command", "command": _hook_command(), "timeout": 60}]}
     )
     hooks["Stop"] = stop
-    return _dump_json(data)
+    return dump_json(data)
 
 
 def _remove_hook(text: str, path: Path) -> str:
     if not text.strip():
         return text
-    data = _load_json_text(text, path)
+    data = load_json_text(text, path)
     hooks = data.get("hooks")
     if isinstance(hooks, dict) and "Stop" in hooks:
         stop = [g for g in hooks["Stop"] if not _is_ours(g)]
@@ -188,19 +110,7 @@ def _remove_hook(text: str, path: Path) -> str:
             del hooks["Stop"]
         if not hooks:
             del data["hooks"]
-    return _dump_json(data)
-
-
-def _load_json_text(text: str, path: Path) -> dict:
-    if not text.strip():
-        return {}
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise ConfigParseError(path, str(e)) from e
-    if not isinstance(data, dict):
-        raise ConfigParseError(path, "expected a JSON object")
-    return data
+    return dump_json(data)
 
 
 def _rules_block() -> str:
@@ -267,25 +177,6 @@ def _prompt_text(entry: dict) -> str | None:
     return text
 
 
-def _clip(s: str, n: int = _SUMMARY_MAX) -> str:
-    s = " ".join(s.split())
-    return s if len(s) <= n else s[: n - 1] + "…"
-
-
-def _summarize_tool(block: dict) -> tuple[str, str | None]:
-    """-> (one-line summary, file path touched or None)."""
-    name = str(block.get("name", "tool"))
-    args = block.get("input")
-    args = args if isinstance(args, dict) else {}
-    for key in _PATH_KEYS:
-        if isinstance(args.get(key), str):
-            return f"{name} {args[key]}", args[key]
-    for key in ("command", "pattern", "query", "url", "description"):
-        if isinstance(args.get(key), str):
-            return f"{name}: {_clip(args[key])}", None
-    return name, None
-
-
 class _Draft:
     """An exchange being assembled while scanning the transcript."""
 
@@ -305,10 +196,9 @@ class _Draft:
                 self.all_texts.append(b["text"].strip())
                 self.texts_after_tool.append(b["text"].strip())
             elif kind == "tool_use":
-                summary, path = _summarize_tool(b)
+                summary, paths = summarize_tool(b.get("name"), b.get("input"))
                 self.tool_summaries.append(summary)
-                if path and path not in self.files:
-                    self.files.append(path)
+                self.files.extend(p for p in paths if p not in self.files)
                 self.texts_after_tool = []
 
     @property
@@ -357,7 +247,7 @@ class ClaudeCodeAdapter(Adapter):
         server = constants.MCP_SERVER_NAME
         if shutil.which("claude"):
             self._mcp_method = "cli"
-            add = ["claude", "mcp", "add", "--scope", "user", server, "--", _exe(), "proxy"]
+            add = ["claude", "mcp", "add", "--scope", "user", server, "--", exe(), "proxy"]
             remove = ["claude", "mcp", "remove", "--scope", "user", server]
 
             def run() -> None:
@@ -378,40 +268,40 @@ class ClaudeCodeAdapter(Adapter):
 
         self._mcp_method = "file"
         path = constants.claude_json_path()
-        old, new = _edit_file(path, lambda t: _add_mcp_to_json(t, path))
+        old, new = edit_file(path, lambda t: _add_mcp_to_json(t, path))
         return Change(
             kind="merge",
             target=str(path),
             description=f"Add '{server}' MCP server to {path} (`claude` not found on PATH)",
-            preview=_diff(path, old, new),
+            preview=diff(path, old, new),
             component="mcp",
-            _apply=lambda: _apply_file_edit(
+            _apply=lambda: apply_file_edit(
                 path, "mcp", lambda t: _add_mcp_to_json(t, path)
             ),
         )
 
     def _plan_hook(self) -> Change:
         path = constants.claude_settings_path()
-        old, new = _edit_file(path, lambda t: _add_hook(t, path))
+        old, new = edit_file(path, lambda t: _add_hook(t, path))
         return Change(
             kind="merge",
             target=str(path),
             description="Add Stop hook that syncs each finished turn to your team",
-            preview=_diff(path, old, new) or "(already installed, no change)",
+            preview=diff(path, old, new) or "(already installed, no change)",
             component="hook",
-            _apply=lambda: _apply_file_edit(path, "hook", lambda t: _add_hook(t, path)),
+            _apply=lambda: apply_file_edit(path, "hook", lambda t: _add_hook(t, path)),
         )
 
     def _plan_rules(self) -> Change:
         path = constants.claude_md_path()
-        old, new = _edit_file(path, _add_rules)
+        old, new = edit_file(path, _add_rules)
         return Change(
             kind="append",
             target=str(path),
             description="Add a Raindrop usage block to CLAUDE.md",
-            preview=_diff(path, old, new) or "(already installed, no change)",
+            preview=diff(path, old, new) or "(already installed, no change)",
             component="rules",
-            _apply=lambda: _apply_file_edit(path, "rules", _add_rules),
+            _apply=lambda: apply_file_edit(path, "rules", _add_rules),
         )
 
     def apply(self, changes: list[Change]) -> InstallStatus:
@@ -431,12 +321,12 @@ class ClaudeCodeAdapter(Adapter):
                 )
             else:
                 path = constants.claude_json_path()
-                _apply_file_edit(path, "mcp", lambda t: _remove_mcp_from_json(t, path))
+                apply_file_edit(path, "mcp", lambda t: _remove_mcp_from_json(t, path))
         if record.get("hook"):
             path = constants.claude_settings_path()
-            _apply_file_edit(path, "hook", lambda t: _remove_hook(t, path))
+            apply_file_edit(path, "hook", lambda t: _remove_hook(t, path))
         if record.get("rules"):
-            _apply_file_edit(constants.claude_md_path(), "rules", _strip_rules)
+            apply_file_edit(constants.claude_md_path(), "rules", _strip_rules)
 
     # ---- extraction side --------------------------------------------------
 

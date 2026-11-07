@@ -10,15 +10,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-CLI_DIR = Path(__file__).resolve().parents[2] / "teamctx-cli"
+CLI_DIR = Path(__file__).resolve().parents[2] / "raindrop-cli"
 if str(CLI_DIR) not in sys.path:
     sys.path.insert(0, str(CLI_DIR))
 
-import api_client
-import config
-from redact import load_env_secrets, redact_obj
-from teamctx.constants import BATCH_SIZE
-from teamctx.models import Exchange
+from raindrop import api_client
+from raindrop import config
+from raindrop.redact import load_env_secrets, redact_obj
+from raindrop.constants import BATCH_SIZE
+from raindrop.models import Exchange
 
 SAFE_SESSION_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 PATH_KEYS = {"file_path", "path", "filename"}

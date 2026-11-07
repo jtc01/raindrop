@@ -2,7 +2,7 @@ export const now = Date.now()
 const minutes = (m) => now - m * 60 * 1000
 
 export const team = {
-  product: "teamctx",
+  product: "raindrop",
   name: "raindrop",
 }
 
@@ -62,9 +62,9 @@ export const exchanges = [
     id: "ex_06",
     agentId: "agt_jordan",
     ts: minutes(8 * 60),
-    prompt: "Generate a join code and a one-time agent key on teamctx join",
+    prompt: "Generate a join code and a one-time agent key on raindrop join",
     reply:
-      "Join validates the code, creates an agent id, and returns secrets.token_urlsafe(32) once. Only sha256 of that key is stored. The CLI writes ~/.teamctx/config.json with permissions 0600.",
+      "Join validates the code, creates an agent id, and returns secrets.token_urlsafe(32) once. Only sha256 of that key is stored. The CLI writes ~/.raindrop/config.json with permissions 0600.",
     files: ["cli/join.py"],
   },
   {
@@ -82,7 +82,7 @@ export const exchanges = [
     ts: minutes(28 * 60),
     prompt: "Only move the sync cursor after the upload succeeds",
     reply:
-      "teamctx sync reads the transcript past the saved offset, holds back a prompt that has no reply yet, and posts complete exchanges in batches. The cursor file updates only when the response is HTTP 200.",
+      "raindrop sync reads the transcript past the saved offset, holds back a prompt that has no reply yet, and posts complete exchanges in batches. The cursor file updates only when the response is HTTP 200.",
     files: ["cli/sync.py", "cli/cursor.py"],
   },
   {

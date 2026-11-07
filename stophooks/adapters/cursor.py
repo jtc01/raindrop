@@ -21,7 +21,7 @@ from stophooks.adapters._common import (
     json_change,
     validate_session_id,
 )
-import config
+from raindrop import config
 
 HOOK_MARKER = "raindrop sync --tool cursor"
 CAPTURE_EVENTS = ("beforeSubmitPrompt", "postToolUse", "afterAgentResponse", "stop")

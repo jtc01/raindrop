@@ -1,4 +1,4 @@
-"""Codex adapter prototype, kept separate from teamctx-cli."""
+"""Codex adapter prototype, kept separate from raindrop-cli."""
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 """`raindrop sync`: push new exchanges from a tool's transcript to the team.
 
 Run by the tool's Stop hook (hook JSON on stdin). Works for any adapter in
-teamctx/adapters/registry.py; the hook passes `--tool <name>`.
+raindrop/adapters/registry.py; the hook passes `--tool <name>`.
 
 Cursor handling: one file per session at ~/.raindrop/cursors/<tool>/<session_id>
 holding the adapter's opaque cursor. It only advances after the API confirms
@@ -13,24 +13,26 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 import httpx
 import typer
 
-import api_client
-import config
-from redact import load_env_secrets, redact_obj
-from teamctx.adapters.registry import get_adapter
-from teamctx.constants import BATCH_SIZE
-from teamctx.errors import NotJoinedError, TeamctxError
+from raindrop import api_client
+from raindrop import config
+from raindrop.redact import load_env_secrets, redact_obj
+from raindrop.adapters.base import Adapter
+from raindrop.adapters.registry import get_adapter
+from raindrop.constants import BATCH_SIZE
+from raindrop.errors import NotJoinedError, RaindropError
 
 SAFE_SESSION_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 
 def _cursor_path(tool: str, session_id: str) -> Path:
     if not SAFE_SESSION_ID.fullmatch(session_id) or ".." in session_id:
-        raise TeamctxError(f"Refusing unsafe session_id: {session_id!r}")
+        raise RaindropError(f"Refusing unsafe session_id: {session_id!r}")
     return config.CONFIG_DIR / "cursors" / tool / session_id
 
 
@@ -40,7 +42,7 @@ def _load_cursor(path: Path) -> int:
     except FileNotFoundError:
         return 0
     except (OSError, ValueError) as e:
-        raise TeamctxError(f"Sync cursor is unreadable: {path}") from e
+        raise RaindropError(f"Sync cursor is unreadable: {path}") from e
 
 
 def _save_cursor(path: Path, cursor: int) -> None:
@@ -56,6 +58,9 @@ def run_sync(payload: dict, tool: str, transport: httpx.BaseTransport | None = N
     if not cfg:
         raise NotJoinedError()
     adapter = get_adapter(tool)
+    # Event-capture tools (e.g. Kiro) spool every hook event before we read.
+    if type(adapter).capture is not Adapter.capture:
+        adapter.capture(payload)
     session = adapter.session_from_hook(payload)
     cursor_file = _cursor_path(tool, session.session_id)
     cursor = _load_cursor(cursor_file)
@@ -74,26 +79,43 @@ def run_sync(payload: dict, tool: str, transport: httpx.BaseTransport | None = N
             api_key=cfg["api_key"], transport=transport,
         )
         if resp.get("accepted") != len(batch):
-            raise TeamctxError("API did not confirm the full batch was stored.")
+            raise RaindropError("API did not confirm the full batch was stored.")
 
     if result.new_cursor != cursor:
         _save_cursor(cursor_file, result.new_cursor)
     return len(wire)
 
 
+def _log_failure(message: str) -> None:
+    try:
+        config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with (config.CONFIG_DIR / "sync.log").open("a") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+    except OSError:
+        pass
+
+
 def sync(
     tool: str = typer.Option("claude-code", "--tool", help="Which tool's hook is calling."),
+    fail_open: bool = typer.Option(
+        False, "--fail-open",
+        help="Always exit 0 and log errors to ~/.raindrop/sync.log. Needed for hooks "
+             "that run before a prompt or tool call, where a non-zero exit blocks the tool.",
+    ),
 ):
-    """Sync new exchanges to your team. Reads the hook's JSON payload from stdin."""
+    """Sync new exchanges to your team. Reads the hook's JSON payload from stdin.
+
+    Output goes to stderr only: some tools add a hook's stdout to the agent's context.
+    """
     try:
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
-            raise TeamctxError("Hook input must be a JSON object.")
+            raise RaindropError("Hook input must be a JSON object.")
         n = run_sync(payload, tool)
-    except api_client.ApiError as e:
-        typer.secho(f"raindrop sync failed: {e.message}", fg="red", err=True)
-        raise typer.Exit(1)
-    except (TeamctxError, json.JSONDecodeError, OSError) as e:
-        typer.secho(f"raindrop sync failed: {e}", fg="red", err=True)
-        raise typer.Exit(1)
-    typer.echo(f"raindrop synced {n} exchange{'' if n == 1 else 's'}.")
+    except (api_client.ApiError, RaindropError, json.JSONDecodeError, OSError) as e:
+        message = getattr(e, "message", None) or str(e)
+        _log_failure(f"{tool}: {message}")
+        typer.secho(f"raindrop sync failed: {message}", fg="red", err=True)
+        raise typer.Exit(0 if fail_open else 1)
+    if n:
+        typer.echo(f"raindrop synced {n} exchange{'' if n == 1 else 's'}.", err=True)

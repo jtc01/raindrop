@@ -1,11 +1,11 @@
 # Codex Stop hook (isolated prototype)
 
 This prototype syncs a completed Codex turn to the Raindrop `/messages` API.
-It intentionally lives outside `teamctx-cli`; it imports that directory's
+It intentionally lives outside `raindrop-cli`; it imports that directory's
 existing config, API client, redactor, and `Exchange` model without modifying
 any files there.
 
-The shared exchange is the shape in `teamctx.models.Exchange`:
+The shared exchange is the shape in `raindrop.models.Exchange`:
 
 - session ID, exchange index, and timestamp
 - user and final assistant text
@@ -19,7 +19,7 @@ same exchange ID, which the API stores idempotently.
 ## Requirements
 
 - Python 3.10+
-- `teamctx-cli` alongside the `stophooks` folder in the Raindrop repository
+- `raindrop-cli` alongside the `stophooks` folder in the Raindrop repository
 - A joined Raindrop team (`raindrop join ...`)
 - Codex with hooks enabled and an accessible `~/.codex/sessions` transcript
 

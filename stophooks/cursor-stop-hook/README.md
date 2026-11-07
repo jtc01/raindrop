@@ -47,7 +47,7 @@ test a mapper to the shared `Exchange` fields (`session_id`, `idx`, `ts`,
 `user_text`, `assistant_text`, `tool_summaries`, and `files_touched`) before
 enabling uploads.
 
-This folder does not modify `teamctx-cli` or install the hook automatically.
+This folder does not modify `raindrop-cli` or install the hook automatically.
 
 ## Tests
 

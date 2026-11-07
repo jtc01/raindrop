@@ -4,11 +4,11 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-import api_client
-import cli
-import config
-import sync_cmd
-from teamctx import constants
+from raindrop import api_client
+from raindrop import cli
+from raindrop import config
+from raindrop import sync_cmd
+from raindrop import constants
 
 runner = CliRunner()
 KEY = "rd_supersecretkey_1234567890abcdef"

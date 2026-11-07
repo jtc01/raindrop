@@ -1,14 +1,14 @@
-"""teamctx/adapters/base.py
+"""raindrop/adapters/base.py
 
 The contract every tool adapter (Claude Code, Cursor, ...) implements.
 
 Shared data types (Exchange, ReadResult, Cursor, ToolRecord) live in
-teamctx/models.py. This file only holds what adapters and the `tools` CLI
+raindrop/models.py. This file only holds what adapters and the `tools` CLI
 commands need.
 
 To add a new tool:
-  1. Subclass Adapter in teamctx/adapters/<tool>.py
-  2. Add one line to ADAPTERS in teamctx/adapters/registry.py
+  1. Subclass Adapter in raindrop/adapters/<tool>.py
+  2. Add one line to ADAPTERS in raindrop/adapters/registry.py
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, ClassVar, Literal
 
-from teamctx.models import Cursor, ReadResult, ToolRecord
+from raindrop.models import Cursor, ReadResult, ToolRecord
 
 Component = Literal["mcp", "hook", "rules"]
 ChangeKind = Literal["create", "merge", "append", "cmd"]

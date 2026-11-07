@@ -21,7 +21,7 @@ _s3 = boto3.client(
     config=Config(retries={"max_attempts": MAX_RETRY_ATTEMPTS, "mode": "adaptive"}),
 )
 
-# Matches PushMessagesRequest in teamctx-cli/models.py.
+# Matches PushMessagesRequest in raindrop-cli/raindrop/models.py.
 MAX_EXCHANGES_PER_REQUEST = 50
 
 
@@ -30,7 +30,7 @@ def _exchange_key(team_id: str, agent_id: str, session_id: str, idx: int) -> str
 
 
 def _vector_id(session_id: str, idx: int) -> str:
-    # Matches Exchange.id in teamctx-cli/models.py -- keep the S3 key, the
+    # Matches Exchange.id in raindrop-cli/raindrop/models.py -- keep the S3 key, the
     # vector key, and the CLI's own notion of an exchange's identity in sync.
     return f"{session_id}:{idx}"
 

@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from teamctx import constants
-from teamctx.adapters.claude import ClaudeCodeAdapter
+from raindrop import constants
+from raindrop.adapters.claude import ClaudeCodeAdapter
 
 
 @pytest.fixture

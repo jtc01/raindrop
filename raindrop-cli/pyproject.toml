@@ -7,13 +7,17 @@ name = "raindrop-cli"
 version = "0.1.0"
 description = "Raindrop CLI: share coding-agent context with your team"
 requires-python = ">=3.10"
-dependencies = ["typer", "httpx"]
+dependencies = ["typer", "httpx", "fastmcp>=4"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
 
 [project.scripts]
-raindrop = "cli:app"
-
-[tool.setuptools]
-py-modules = ["cli", "api_client", "config", "redact", "sync_cmd", "tools_cmd"]
+raindrop = "raindrop.cli:app"
 
 [tool.setuptools.packages.find]
-include = ["teamctx*"]
+include = ["raindrop*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -9,13 +9,13 @@ import sys
 from pathlib import Path
 from typing import Callable
 
-CLI_DIR = Path(__file__).resolve().parents[2] / "teamctx-cli"
+CLI_DIR = Path(__file__).resolve().parents[2] / "raindrop-cli"
 if str(CLI_DIR) not in sys.path:
     sys.path.insert(0, str(CLI_DIR))
 
-from teamctx.adapters.base import Adapter, Change, SessionRef
-from teamctx.errors import ConfigParseError, TranscriptError
-from teamctx.models import Cursor, Exchange, ReadResult, ToolRecord
+from raindrop.adapters.base import Adapter, Change, SessionRef
+from raindrop.errors import ConfigParseError, TranscriptError
+from raindrop.models import Cursor, Exchange, ReadResult, ToolRecord
 
 
 def load_json(path: Path) -> dict:
