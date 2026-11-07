@@ -56,7 +56,7 @@ def test_antigravity_install_remove_roundtrip(env):
     for _ in range(2):  # idempotent
         r = add("antigravity", "--rules")
         assert r.exit_code == 0, r.output
-    assert "Google Antigravity ✓ MCP + rules" in r.output
+    assert "Google Antigravity [ok] MCP + rules" in r.output
     assert "auto-sync isn't available" in r.output
 
     servers = json.loads(mcp.read_text())["mcpServers"]
@@ -96,7 +96,7 @@ def test_copilot_install_remove_keeps_user_content(env):
     for _ in range(2):
         r = add("copilot", "--rules")
         assert r.exit_code == 0, r.output
-    assert "GitHub Copilot ✓ MCP + rules" in r.output
+    assert "GitHub Copilot [ok] MCP + rules" in r.output
 
     servers = json.loads((d / "mcp-config.json").read_text())["mcpServers"]
     entry = servers[constants.MCP_SERVER_NAME]

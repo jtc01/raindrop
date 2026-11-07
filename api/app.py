@@ -3,7 +3,7 @@
 Run locally:   uvicorn app:app --port 8080
 MCP endpoint:  http://localhost:8080/mcp
 
-MCP tools:      ping, whoami, search_team_context, list_teammates
+MCP tools:      ping, whoami, search_team_context, get_recent_activity, list_teammates
 Public routes:  GET /health, POST /teams, POST /join
 Authed routes:  /mcp, POST /messages, POST /invite, GET /me, GET /teammates,
                 POST /rotate-key, POST /leave, POST /remove (lead), GET /codes,
@@ -27,6 +27,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 import messages  # ingestion: S3 write + Titan embedding + S3 Vectors upsert
+import recent  # newest exchanges straight from S3 (no embedding)
 import search  # retrieval: embed query, scoped vector search, rerank, hydrate
 
 # ---------- config ----------
@@ -194,6 +195,34 @@ def search_team_context(query: str, top_k: int = 8) -> dict:
             "user_text": _trim(r.get("user_text")),
             "assistant_text": _trim(r.get("assistant_text")),
             "score": round(float(r.get("score", 0.0)), 4),
+        } for r in results],
+    }
+
+
+RECENT_N_MAX = 25
+
+
+@mcp.tool
+def get_recent_activity(n: int = 10, include_self: bool = False) -> dict:
+    """The n newest exchanges (prompt + reply + files touched) from your teammates'
+    agents, newest first. Use it to catch up on what the team has been doing without
+    a specific question; use search_team_context when you are looking for something
+    particular. Your own exchanges are left out unless include_self is true."""
+    ident = current_identity()
+    n = max(1, min(int(n), RECENT_N_MAX))
+    results = recent.recent_activity(
+        ident["team_id"], n, exclude_agent_id=None if include_self else ident["agent_id"]
+    )
+    names = {m["agent_id"]: m["display_name"] for m in list_team_members(ident["team_id"])}
+    return {
+        "results": [{
+            "display_name": names.get(r.get("agent_id"), r.get("agent_id") or "unknown"),
+            "agent_id": r.get("agent_id"),
+            "session_id": r.get("session_id"),
+            "ts": r.get("ts"),
+            "files_touched": r.get("files_touched", []),
+            "user_text": _trim(r.get("user_text")),
+            "assistant_text": _trim(r.get("assistant_text")),
         } for r in results],
     }
 
