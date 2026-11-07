@@ -43,20 +43,24 @@ def _rerank_score(similarity: float, ts: int, now: int) -> float:
 
 
 def _hydrate(match: VectorMatch) -> dict[str, Any]:
-    """Full text lives in S3; vector metadata carries just enough (including
-    display_name) to still return something useful if that fetch fails,
-    instead of dropping the result entirely.
+    """Full text lives in S3; vector metadata carries enough (display_name,
+    session_id, idx, preview, ...) to still return something useful if that
+    fetch fails, instead of dropping the result entirely.
     """
     base = {
         "agent_id": match.metadata.get("agent_id"),
         "display_name": match.metadata.get("display_name"),
+        "session_id": match.metadata.get("session_id"),
+        "idx": match.metadata.get("idx"),
         "ts": match.metadata.get("ts"),
         "files_touched": match.metadata.get("files_touched", []),
+        "similarity": match.similarity,
+        "preview": match.metadata.get("preview"),
     }
     s3_key = match.metadata.get("s3_key")
     if not s3_key:
         logger.error("search: vector %s has no s3_key in metadata, falling back to vector metadata", match.vector_id)
-        return {**base, "user_text": None, "assistant_text": match.metadata.get("preview")}
+        return {**base, "user_text": None, "assistant_text": None}
 
     try:
         obj = _s3.get_object(Bucket=EXCHANGES_BUCKET, Key=s3_key)
@@ -66,7 +70,7 @@ def _hydrate(match: VectorMatch) -> dict[str, Any]:
             "search: failed to hydrate %s from s3://%s/%s, falling back to vector metadata",
             match.vector_id, EXCHANGES_BUCKET, s3_key,
         )
-        return {**base, "user_text": None, "assistant_text": match.metadata.get("preview")}
+        return {**base, "user_text": None, "assistant_text": None}
 
     return {
         **base,
