@@ -16,6 +16,7 @@ import re
 import secrets
 import time
 import uuid
+from datetime import datetime, timezone
 
 import anyio
 import boto3
@@ -167,64 +168,76 @@ def whoami() -> dict:
     return current_identity()
 
 
-SEARCH_TEXT_MAX_CHARS = 1500
 SEARCH_TOP_K_MAX = 25
 
+CONTEXT_SNIPPET_MAX_CHARS = 200  # per asked/did snippet
+CONTEXT_BLOCK_MAX_CHARS = 6000  # total text handed to the agent, across all lines
 
-def _trim(text: str | None, limit: int = SEARCH_TEXT_MAX_CHARS) -> str:
-    text = text or ""
+
+def _snippet(text: str | None, limit: int = CONTEXT_SNIPPET_MAX_CHARS) -> str:
+    text = (text or "").strip()
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
+def _fmt_when(ts) -> str:
+    if not ts:
+        return "unknown time"
+    return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _format_exchanges(results: list[dict], empty_message: str) -> str:
+    """Compact, labeled lines for an agent to read directly -- who, when,
+    what they asked, what happened, which files -- instead of raw dicts.
+    Capped in total size so one call can't flood the caller's context."""
+    lines: list[str] = []
+    total = 0
+    for r in results:
+        who = r.get("display_name") or r.get("agent_id") or "unknown"
+        when = _fmt_when(r.get("ts"))
+        files = r.get("files_touched") or []
+        files_suffix = f" [files: {', '.join(files)}]" if files else ""
+        asked = _snippet(r.get("user_text"))
+        did = _snippet(r.get("assistant_text") or r.get("preview"))
+        line = f'- {who} ({when}): "{asked}" → "{did}"{files_suffix}'
+        if lines and total + len(line) + 1 > CONTEXT_BLOCK_MAX_CHARS:
+            break
+        lines.append(line)
+        total += len(line) + 1
+    return "\n".join(lines) if lines else empty_message
+
+
 @mcp.tool
-def search_team_context(query: str, top_k: int = 8) -> dict:
+def search_team_context(query: str, top_k: int = 8) -> str:
     """Semantic search over what your teammates' agents have been working on.
-    Returns the most relevant recent exchanges (prompt + reply + files touched)
-    from everyone on your team, including you. Use it before starting work that
-    may overlap with a teammate's, or to find out who touched a file or feature."""
+    Returns the most relevant recent exchanges (who, when, prompt, reply, files
+    touched) from everyone on your team, including you, as compact labeled text.
+    Use it before starting work that may overlap with a teammate's, or to find
+    out who touched a file or feature."""
     ident = current_identity()
     top_k = max(1, min(int(top_k), SEARCH_TOP_K_MAX))
     results = search.search(ident["team_id"], query, top_k)
-    return {
-        "query": query,
-        "results": [{
-            "display_name": r.get("display_name") or r.get("agent_id") or "unknown",
-            "agent_id": r.get("agent_id"),
-            "ts": r.get("ts"),
-            "files_touched": r.get("files_touched", []),
-            "user_text": _trim(r.get("user_text")),
-            "assistant_text": _trim(r.get("assistant_text")),
-            "score": round(float(r.get("score", 0.0)), 4),
-        } for r in results],
-    }
+    return _format_exchanges(results, "No relevant context found.")
 
 
 RECENT_N_MAX = 25
 
 
 @mcp.tool
-def get_recent_activity(n: int = 10, include_self: bool = False) -> dict:
-    """The n newest exchanges (prompt + reply + files touched) from your teammates'
-    agents, newest first. Use it to catch up on what the team has been doing without
-    a specific question; use search_team_context when you are looking for something
-    particular. Your own exchanges are left out unless include_self is true."""
+def get_recent_activity(n: int = 10, include_self: bool = False) -> str:
+    """The n newest exchanges (who, when, prompt, reply, files touched) from your
+    teammates' agents, newest first, as compact labeled text. Use it to catch up
+    on what the team has been doing without a specific question; use
+    search_team_context when you are looking for something particular. Your own
+    exchanges are left out unless include_self is true."""
     ident = current_identity()
     n = max(1, min(int(n), RECENT_N_MAX))
     results = recent.recent_activity(
         ident["team_id"], n, exclude_agent_id=None if include_self else ident["agent_id"]
     )
     names = {m["agent_id"]: m["display_name"] for m in list_team_members(ident["team_id"])}
-    return {
-        "results": [{
-            "display_name": names.get(r.get("agent_id"), r.get("agent_id") or "unknown"),
-            "agent_id": r.get("agent_id"),
-            "session_id": r.get("session_id"),
-            "ts": r.get("ts"),
-            "files_touched": r.get("files_touched", []),
-            "user_text": _trim(r.get("user_text")),
-            "assistant_text": _trim(r.get("assistant_text")),
-        } for r in results],
-    }
+    for r in results:
+        r["display_name"] = names.get(r.get("agent_id"), r.get("agent_id") or "unknown")
+    return _format_exchanges(results, "No recent activity.")
 
 
 @mcp.tool
