@@ -1,4 +1,4 @@
 fastmcp
 starlette
 uvicorn
-boto3
+boto3>=1.40.0
