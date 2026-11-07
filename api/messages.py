@@ -11,7 +11,7 @@ import boto3
 from botocore.config import Config
 
 from config import AWS_REGION, EXCHANGES_BUCKET, MAX_RETRY_ATTEMPTS
-from embed import EmbeddingError, build_exchange_embedding_text, embed_text
+from embed import EmbeddingError, EmptyTextError, build_exchange_embedding_text, embed_text
 from vector_store import VectorStoreError, VectorStoreValidationError, put_vector
 
 logger = logging.getLogger(__name__)
@@ -89,6 +89,10 @@ def ingest_exchanges(identity: dict[str, Any], exchanges: list[dict[str, Any]]) 
         retry the same batch forever and block every exchange behind it. The
         exchange IS durably in S3, so count it accepted, log loudly, and let
         scripts/backfill_vectors.py pick it up once the cause is fixed.
+      - Likewise when there is nothing to embed (EmptyTextError: user_text,
+        assistant_text and files_touched all empty): no vector can ever exist
+        for it, so it is accepted and intentionally never indexed. Other
+        EmbeddingErrors (bad Titan response) stay retryable.
     """
     team_id = identity["team_id"]
     agent_id = identity["agent_id"]
@@ -135,6 +139,12 @@ def ingest_exchanges(identity: dict[str, Any], exchanges: list[dict[str, Any]]) 
             )
             embedding = embed_text(text)
             put_vector(vector_id, embedding, metadata=vector_metadata(doc, s3_key))
+        except EmptyTextError:
+            logger.warning(
+                "ingest_exchanges: vector_write_skipped=true reason=empty_text for %s "
+                "(nothing to embed; exchange stored in S3 and counted as accepted, not indexed)",
+                vector_id,
+            )
         except VectorStoreValidationError:
             logger.exception(
                 "ingest_exchanges: vector_write_rejected=true for %s "

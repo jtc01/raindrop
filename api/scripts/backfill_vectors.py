@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # api/ on the path
 import boto3  # noqa: E402
 
 from config import AWS_REGION, EXCHANGES_BUCKET, VECTOR_BUCKET_NAME, VECTOR_INDEX_NAME  # noqa: E402
-from embed import EmbeddingError, build_exchange_embedding_text, embed_text  # noqa: E402
+from embed import EmptyTextError, build_exchange_embedding_text, embed_text  # noqa: E402
 from messages import _vector_id, vector_metadata  # noqa: E402
 from vector_store import VectorStoreError, existing_vector_keys, put_vectors_batch  # noqa: E402
 
@@ -66,9 +66,11 @@ def find_missing(all_ids: dict[str, str]) -> dict[str, str]:
     return {vid: all_ids[vid] for vid in ids if vid not in present}
 
 
-def backfill(s3, missing: dict[str, str]) -> tuple[int, list[tuple[str, str]]]:
-    """Embed + write every missing exchange. Returns (written, [(vector_id, error)])."""
+def backfill(s3, missing: dict[str, str]) -> tuple[int, list[str], list[tuple[str, str]]]:
+    """Embed + write every missing exchange.
+    Returns (written, [vector_id skipped: nothing to embed], [(vector_id, error)])."""
     written = 0
+    skipped_empty: list[str] = []
     failures: list[tuple[str, str]] = []
     items = sorted(missing.items())
     for start in range(0, len(items), WRITE_CHUNK):
@@ -82,7 +84,9 @@ def backfill(s3, missing: dict[str, str]) -> tuple[int, list[tuple[str, str]]]:
                 )
                 embedding = embed_text(text)
                 batch.append((vector_id, embedding, vector_metadata(doc, s3_key)))
-            except (EmbeddingError, KeyError, ValueError, Exception) as exc:  # noqa: BLE001 -- report and keep going
+            except EmptyTextError:
+                skipped_empty.append(vector_id)  # same as ingestion: accepted, intentionally never indexed
+            except Exception as exc:  # noqa: BLE001 -- report and keep going
                 failures.append((vector_id, f"{type(exc).__name__}: {exc}"))
         if not batch:
             continue
@@ -92,7 +96,7 @@ def backfill(s3, missing: dict[str, str]) -> tuple[int, list[tuple[str, str]]]:
             print(f"  wrote {written}/{len(items)}", flush=True)
         except VectorStoreError as exc:
             failures.extend((vid, f"put_vectors: {exc}") for vid, _, _ in batch)
-    return written, failures
+    return written, skipped_empty, failures
 
 
 def main() -> int:
@@ -121,12 +125,15 @@ def main() -> int:
         return 0
 
     print(f"\nbackfilling {len(missing)} vector(s)...")
-    written, failures = backfill(s3, missing)
+    written, skipped_empty, failures = backfill(s3, missing)
 
     print("\nsummary")
     print(f"  exchange objects in S3: {len(all_ids)}")
     print(f"  missing before:         {len(missing)}")
     print(f"  written:                {written}")
+    print(f"  skipped (empty text):   {len(skipped_empty)}")
+    for vid in skipped_empty:
+        print(f"    {vid}")
     print(f"  failed:                 {len(failures)}")
     for vid, err in failures:
         print(f"    {vid}: {err}")

@@ -33,6 +33,11 @@ class EmbeddingError(Exception):
     """Raised when Bedrock returns a response we can't use as an embedding."""
 
 
+class EmptyTextError(EmbeddingError):
+    """Nothing to embed (empty user_text + assistant_text + files_touched).
+    Deterministic: retrying the same input can never succeed."""
+
+
 def build_exchange_embedding_text(
     user_text: str, assistant_text: str, files_touched: Sequence[str] = ()
 ) -> str:
@@ -49,7 +54,7 @@ def build_exchange_embedding_text(
 def embed_text(text: str) -> list[float]:
     """Embed text with Bedrock Titan V2. Returns a 512-dim normalized vector."""
     if not text:
-        raise EmbeddingError("cannot embed empty text")
+        raise EmptyTextError("cannot embed empty text")
 
     if len(text) > EMBED_MAX_INPUT_CHARS:
         logger.warning(
