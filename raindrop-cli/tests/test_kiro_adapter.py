@@ -114,7 +114,7 @@ def test_install_remove_roundtrip_preserves_user_config(env):
     for _ in range(2):  # idempotent
         r = runner.invoke(cli.app, ["tools", "add", "kiro", "--yes", "--rules"])
         assert r.exit_code == 0, r.output
-    assert "Kiro CLI ✓ MCP + auto-sync hook + rules" in r.output
+    assert "Kiro CLI [ok] MCP + auto-sync hook + rules" in r.output
 
     servers = json.loads(mcp.read_text())["mcpServers"]
     assert set(servers) == {"fetch", constants.MCP_SERVER_NAME}

@@ -308,10 +308,10 @@ def doctor():
             typer.echo(f"  -  {label}")
             return
         ok_all &= ok
-        mark = typer.style("✓", fg="green") if ok else typer.style("✗", fg="red")
+        mark = typer.style("[ok]", fg="green") if ok else typer.style("[x]", fg="red")
         typer.echo(f"  {mark}  {label}")
         if not ok and fix:
-            typer.echo(f"       → {fix}")
+            typer.echo(f"       -> {fix}")
 
     import shutil
     import sys
@@ -363,7 +363,7 @@ def doctor():
     if ok_all:
         typer.secho("Everything looks good.", fg="green")
     else:
-        typer.secho("Some checks failed. Fix the items marked ✗ above.", fg="yellow")
+        typer.secho("Some checks failed. Fix the items marked [x] above.", fg="yellow")
         raise typer.Exit(1)
 
 

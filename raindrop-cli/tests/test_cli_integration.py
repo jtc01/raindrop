@@ -46,7 +46,7 @@ def test_tools_add_dry_run_then_add_then_remove(env):
 
     r = runner.invoke(cli.app, ["tools", "add", "claude-code", "--yes", "--rules"])
     assert r.exit_code == 0, r.output
-    assert "Claude Code ✓ MCP + auto-sync hook + rules" in r.output
+    assert "Claude Code [ok] MCP + auto-sync hook + rules" in r.output
     cfg = config.load()
     assert cfg["tools"]["claude-code"]["hook"] is True
     assert cfg["tools"]["claude-code"]["extra"]["mcp_method"] == "file"

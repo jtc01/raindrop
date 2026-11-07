@@ -25,7 +25,7 @@ def _require_config() -> dict:
 def _summary(adapter: Adapter, status) -> str:
     parts = [label for label, on in (("MCP", status.mcp), ("auto-sync hook", status.hook),
                                       ("rules", status.rules)) if on]
-    return f"{adapter.display_name} ✓ " + " + ".join(parts)
+    return f"{adapter.display_name} [ok] " + " + ".join(parts)
 
 
 def _run(fn):
@@ -53,7 +53,7 @@ def add(
 
         typer.secho(f"Planned changes for {adapter.display_name}:", bold=True)
         for c in changes:
-            typer.echo(f"\n• {c.description}")
+            typer.echo(f"\n- {c.description}")
             typer.echo("\n".join("    " + ln for ln in c.preview.rstrip().splitlines()))
         if dry_run:
             typer.echo("\n(dry run: nothing changed)")
