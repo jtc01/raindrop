@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, ClassVar, Literal
 
+from raindrop.errors import TranscriptError
 from raindrop.models import Cursor, ReadResult, ToolRecord
 
 Component = Literal["mcp", "hook", "rules"]
@@ -117,6 +118,15 @@ class Adapter(ABC):
         assistant reply yet, leave it out and set new_cursor to the start of
         that prompt, not EOF, so it is picked up on the next run.
         """
+
+    def latest_session(self, repo: Path) -> SessionRef | None:
+        """The most recently active session whose working directory is inside
+        `repo` (a resolved repo root), or None if there isn't one. Used by
+        `raindrop sync --dry-run` when no hook payload is given. Read-only."""
+        raise TranscriptError(
+            f"{self.display_name} sessions can't be looked up yet; "
+            "pipe a hook payload into `raindrop sync --dry-run` instead."
+        )
 
     def capture(self, payload: dict) -> None:
         """Event-capture tools (no readable transcript) override this to spool

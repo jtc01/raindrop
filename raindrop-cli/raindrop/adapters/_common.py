@@ -16,10 +16,10 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable, Iterator
 
 from raindrop import constants
-from raindrop.adapters.base import Change
+from raindrop.adapters.base import Change, SessionRef
 from raindrop.errors import ConfigParseError, InstallError, TranscriptError
 
 CLI_NAME = "raindrop"
@@ -224,6 +224,59 @@ def json_change(path: Path, description: str, transform: Callable[[dict], dict])
         component="hook",
         _apply=lambda: apply_file_edit(path, "hook", new_text),
     )
+
+
+# ---------------------------------------------------------------------------
+# Finding the latest session in a repo (for `raindrop sync --dry-run`)
+# ---------------------------------------------------------------------------
+
+# How much of a transcript/spool to read when looking for its session's cwd.
+HEAD_BYTES = 256 * 1024
+
+
+def jsonl_head(path: Path, limit: int = HEAD_BYTES) -> Iterator[dict]:
+    """JSON objects from the first `limit` bytes of a JSONL file. Bad lines are skipped."""
+    with path.open("rb") as f:
+        data = f.read(limit)
+    for line in data.splitlines():
+        try:
+            value = json.loads(line)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict):
+            yield value
+
+
+# probe(path) -> (session_id, cwd) or None if the file isn't a usable session.
+Probe = Callable[[Path], "tuple[str, str] | None"]
+
+
+def newest_session_in_repo(
+    files: Iterable[Path], probe: Probe, repo: Path, *, transcript: bool = True
+) -> SessionRef | None:
+    """Newest file (by mtime) whose session ran inside `repo`, as a SessionRef.
+
+    `transcript=False` for spool-backed adapters whose read_new finds the file
+    from the session id itself."""
+    from raindrop.config import repo_root  # config doesn't import adapters; no cycle
+
+    def mtime(p: Path) -> float:
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return -1.0
+
+    for path in sorted(files, key=mtime, reverse=True):
+        try:
+            found = probe(path)
+        except OSError:
+            continue
+        if not found:
+            continue
+        session_id, cwd = found
+        if repo_root(cwd) == repo:
+            return SessionRef(session_id=session_id, transcript_path=path if transcript else None, cwd=cwd)
+    return None
 
 
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")

@@ -26,6 +26,7 @@ import json
 import re
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -34,7 +35,7 @@ import typer
 from raindrop import api_client
 from raindrop import config
 from raindrop.redact import load_env_secrets, redact_obj
-from raindrop.adapters.base import Adapter
+from raindrop.adapters.base import Adapter, SessionRef
 from raindrop.adapters.registry import get_adapter
 from raindrop.constants import BATCH_SIZE
 from raindrop.errors import NotJoinedError, RaindropError
@@ -97,6 +98,15 @@ def _save_state(cursor_file: Path, failures: dict[str, int], skipped: set[str]) 
     tmp.replace(path)
 
 
+def _known_secrets(cfg: dict, session: SessionRef) -> list[str]:
+    """Exact values to scrub: our API key plus secret-looking values from the
+    session repo's .env files. Shared by real and dry-run syncs."""
+    secrets = [cfg["api_key"]]
+    if session.cwd:
+        secrets += load_env_secrets(Path(session.cwd))
+    return secrets
+
+
 def run_sync(payload: dict, tool: str, transport: httpx.BaseTransport | None = None) -> int:
     """Sync one hook event. Returns the number of exchanges pushed."""
     cfg = config.load()
@@ -119,9 +129,7 @@ def run_sync(payload: dict, tool: str, transport: httpx.BaseTransport | None = N
             _save_cursor(cursor_file, result.new_cursor)
         return 0
 
-    secrets = [cfg["api_key"]]
-    if session.cwd:
-        secrets += load_env_secrets(Path(session.cwd))
+    secrets = _known_secrets(cfg, session)
     wire_all = [redact_obj(e.to_wire(), known_secrets=secrets) for e in result.exchanges]
 
     failures, skipped = _load_state(cursor_file)
@@ -166,6 +174,195 @@ def run_sync(payload: dict, tool: str, transport: httpx.BaseTransport | None = N
     return len(wire)
 
 
+# ---------------------------------------------------------------------------
+# Dry run: show what a sync would send, without sending or saving anything
+# ---------------------------------------------------------------------------
+
+_MARKER = re.compile(r"\[REDACTED(?::[a-z0-9-]+)?\]")
+# Past this many markers in one string, skip span alignment (regex backtracking).
+_MAX_ALIGNED_MARKERS = 200
+
+
+@dataclass
+class Redaction:
+    field: str  # e.g. "user_text", "tool_summaries[2]"
+    marker: str  # what replaced it, e.g. "[REDACTED:openai-key]"
+    start: int | None  # char offsets into the original string; None if unknown
+    end: int | None
+    original: str | None
+
+
+@dataclass
+class DryRunExchange:
+    wire: dict  # redacted, exactly what would be POSTed
+    redactions: list[Redaction]
+    abandoned: bool = False  # given up on earlier; a real sync won't resend it
+
+
+@dataclass
+class DryRunReport:
+    tool: str
+    session: SessionRef
+    source: str  # "hook payload" or "latest session"
+    repo: Path | None
+    shared: bool
+    skip_reason: str  # why the repo isn't shared ("" if it is)
+    cursor: int
+    new_cursor: int
+    exchanges: list[DryRunExchange] = field(default_factory=list)
+
+
+def redacted_spans(original: str, redacted: str, field_name: str = "") -> list[Redaction]:
+    """Which parts of `original` became [REDACTED...] markers in `redacted`.
+
+    redact() only returns the final text, so align the two: the redacted text
+    is the original's kept pieces with markers between them, and a lazy regex
+    over those pieces recovers each replaced span."""
+    if original == redacted:
+        return []
+    pieces = _MARKER.split(redacted)
+    markers = _MARKER.findall(redacted)
+    m = None
+    if len(markers) <= _MAX_ALIGNED_MARKERS:
+        pattern = re.escape(pieces[0]) + "".join("(.+?)" + re.escape(p) for p in pieces[1:])
+        m = re.fullmatch(pattern, original, re.DOTALL)
+    if m is None:
+        return [Redaction(field_name, mk, None, None, None) for mk in markers]
+    return [
+        Redaction(field_name, mk, m.start(i), m.end(i), m.group(i))
+        for i, mk in enumerate(markers, 1)
+        if m.group(i) != mk  # a marker that was already in the text
+    ]
+
+
+def _diff_redactions(before: object, after: object, path: str = "") -> list[Redaction]:
+    """Walk an exchange before/after redact_obj and collect every redacted span."""
+    if isinstance(before, str) and isinstance(after, str):
+        return redacted_spans(before, after, path)
+    if isinstance(before, dict) and isinstance(after, dict):
+        return [r for k in before for r in _diff_redactions(before[k], after.get(k), k)]
+    if isinstance(before, list) and isinstance(after, list):
+        return [r for i, (b, a) in enumerate(zip(before, after)) for r in _diff_redactions(b, a, f"{path}[{i}]")]
+    return []
+
+
+def _skip_reason(cwd: str | None, cfg: dict) -> str:
+    sharing = cfg.get("sharing", {})
+    if sharing.get("paused"):
+        return "sharing is paused everywhere (`raindrop resume` to resume)"
+    if config.sharing_paused(cwd, cfg):
+        return "sharing is paused for this repo (`raindrop resume --repo` to resume)"
+    return "sharing is opt-in and this repo hasn't been shared (`raindrop share --repo` to share it)"
+
+
+def run_dry_run(payload: dict | None, tool: str, cwd: str | Path | None = None) -> DryRunReport:
+    """Everything run_sync would do up to the upload, with no writes at all:
+    no capture/spooling, no push, no cursor or failure-state update.
+
+    With no payload, previews the most recent `tool` session in the repo
+    containing `cwd` (default: the current directory)."""
+    cfg = config.load()
+    if not cfg:
+        raise NotJoinedError()
+    adapter = get_adapter(tool)
+    if payload is not None:
+        session = adapter.session_from_hook(payload)
+        source = "hook payload"
+    else:
+        repo = config.repo_root(cwd)
+        found = adapter.latest_session(repo)
+        if found is None:
+            raise RaindropError(f"No {adapter.display_name} session found for {repo}.")
+        session, source = found, "latest session"
+
+    cursor_file = _cursor_path(tool, session.session_id)
+    cursor = _load_cursor(cursor_file)
+    result = adapter.read_new(session, cursor)
+    shared = config.should_share(session.cwd, cfg)
+    _, skipped = _load_state(cursor_file)
+
+    secrets = _known_secrets(cfg, session)
+    exchanges = []
+    for ex in result.exchanges:
+        raw = ex.to_wire()
+        wire = redact_obj(raw, known_secrets=secrets)
+        exchanges.append(DryRunExchange(
+            wire=wire,
+            redactions=_diff_redactions(dict(raw), wire),
+            abandoned=wire["id"] in skipped,
+        ))
+    return DryRunReport(
+        tool=tool,
+        session=session,
+        source=source,
+        repo=config.repo_root(session.cwd) if session.cwd else None,
+        shared=shared,
+        skip_reason="" if shared else _skip_reason(session.cwd, cfg),
+        cursor=cursor,
+        new_cursor=result.new_cursor,
+        exchanges=exchanges,
+    )
+
+
+def _preview(text: str, n: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def _hint(secret: str) -> str:
+    """Enough of a redacted value to recognize a false positive, not enough to leak it."""
+    shown = " ".join(secret.split())[:4]
+    return f'"{shown}…" ({len(secret)} chars)'
+
+
+def format_dry_run(report: DryRunReport) -> str:
+    s = report.session
+    out = [f"raindrop sync --dry-run ({report.tool}, {report.source})"]
+    out.append(f"  Session:    {s.session_id}")
+    if s.transcript_path:
+        out.append(f"  Transcript: {s.transcript_path}")
+    out.append(f"  Repo:       {report.repo or '(unknown)'}")
+    out.append(f"  Cursor:     {report.cursor} -> {report.new_cursor} (not saved)")
+    out.append("")
+
+    n = len(report.exchanges)
+    if not report.shared:
+        out.append(f"This repo isn't shared: {report.skip_reason}.")
+        if n:
+            what = "this exchange" if n == 1 else f"these {n} exchanges"
+            out.append(f"A real sync would skip {what} for good "
+                       "(cursor advances, nothing is uploaded):")
+        else:
+            out.append("No new exchanges to skip.")
+    elif not n:
+        out.append("No new exchanges since the last sync.")
+    else:
+        sending = sum(not e.abandoned for e in report.exchanges)
+        out.append(f"A real sync would upload {sending} exchange{'' if sending == 1 else 's'}:")
+
+    for e in report.exchanges:
+        w = e.wire
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(w["ts"]))
+        tag = "  (previously abandoned; won't be resent)" if e.abandoned else ""
+        out.append("")
+        out.append(f"[{w['id']}] {when}{tag}")
+        out.append(f"  Prompt: {_preview(w['user_text'], 500)}")
+        out.append(f"  Reply:  {_preview(w['assistant_text'], 240)}")
+        out.append(f"  Files:  {', '.join(w['files_touched']) or '(none)'}")
+        if e.redactions:
+            out.append(f"  Redacted ({len(e.redactions)}):")
+            for r in e.redactions:
+                where = f" chars {r.start}-{r.end}" if r.start is not None else ""
+                what = f"{_hint(r.original)} -> " if r.original is not None else ""
+                out.append(f"    - {r.field}{where}: {what}{r.marker}")
+        else:
+            out.append("  Redacted: nothing")
+
+    out.append("")
+    out.append("Dry run: nothing was uploaded and the cursor was not advanced.")
+    return "\n".join(out)
+
+
 def _log_failure(message: str) -> None:
     try:
         config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -175,6 +372,19 @@ def _log_failure(message: str) -> None:
         pass
 
 
+def _read_optional_payload() -> dict | None:
+    """Hook payload from stdin for --dry-run, or None if stdin is a terminal or empty."""
+    if sys.stdin is None or sys.stdin.isatty():
+        return None
+    text = sys.stdin.read()
+    if not text.strip():
+        return None
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise RaindropError("Hook input must be a JSON object.")
+    return payload
+
+
 def sync(
     tool: str = typer.Option("claude-code", "--tool", help="Which tool's hook is calling."),
     fail_open: bool = typer.Option(
@@ -182,11 +392,26 @@ def sync(
         help="Always exit 0 and log errors to ~/.raindrop/sync.log. Needed for hooks "
              "that run before a prompt or tool call, where a non-zero exit blocks the tool.",
     ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Show what would be synced (after redaction) without uploading or advancing "
+             "the cursor. With no hook payload on stdin, previews the most recent --tool "
+             "session in the current repo.",
+    ),
 ):
     """Sync new exchanges to your team. Reads the hook's JSON payload from stdin.
 
     Output goes to stderr only: some tools add a hook's stdout to the agent's context.
+    (--dry-run is for people, not hooks, and prints its report to stdout.)
     """
+    if dry_run:
+        try:
+            report = run_dry_run(_read_optional_payload(), tool)
+        except (RaindropError, json.JSONDecodeError, OSError) as e:
+            typer.secho(f"raindrop sync --dry-run failed: {e}", fg="red", err=True)
+            raise typer.Exit(1)
+        typer.echo(format_dry_run(report))
+        return
     try:
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):

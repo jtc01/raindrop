@@ -40,6 +40,8 @@ from raindrop.adapters._common import (
     dump_json,
     edit_file,
     exe,
+    jsonl_head,
+    newest_session_in_repo,
     quote_cmd,
     load_json_text,
     summarize_tool,
@@ -241,6 +243,8 @@ class KiroAdapter(Adapter):
         if kind is None:
             return
         record: dict = {"ts": int(time.time()), "session_id": _session_id(payload)}
+        if isinstance(payload.get("cwd"), str):
+            record["cwd"] = payload["cwd"]  # lets `sync --dry-run` find the session by repo
         if kind == "prompt":
             text = payload.get("prompt") or payload.get("user_prompt") or os.environ.get("USER_PROMPT")
             record.update(event="prompt", text=text if isinstance(text, str) else "")
@@ -253,6 +257,25 @@ class KiroAdapter(Adapter):
         if kind == "prompt" and not record["text"].strip():
             return
         _append(spool_path(record["session_id"]), record)
+
+    def latest_session(self, repo: Path) -> SessionRef | None:
+        # Spools written before records carried "cwd" can still be matched when
+        # their id is the per-directory fallback hash of this repo or this dir.
+        by_hash = {
+            "kiro-" + sha1(str(d).encode()).hexdigest()[:12]: str(d)
+            for d in (Path.cwd(), repo)
+        }
+
+        def probe(path: Path) -> tuple[str, str] | None:
+            for record in jsonl_head(path):
+                if isinstance(record.get("cwd"), str):
+                    return path.stem, record["cwd"]
+            cwd = by_hash.get(path.stem)
+            return (path.stem, cwd) if cwd else None
+
+        spools = spool_path("x").parent
+        files = spools.glob("*.jsonl") if spools.is_dir() else []
+        return newest_session_in_repo(files, probe, repo, transcript=False)
 
     def read_new(self, session: SessionRef, cursor: Cursor) -> ReadResult:
         path = spool_path(session.session_id)

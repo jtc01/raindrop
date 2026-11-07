@@ -9,7 +9,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from raindrop.adapters._common import json_change, validate_session_id
+from raindrop.adapters._common import (
+    json_change,
+    jsonl_head,
+    newest_session_in_repo,
+    validate_session_id,
+)
 from raindrop.adapters.base import Adapter, Change, SessionRef
 from raindrop.errors import TranscriptError
 from raindrop.models import Cursor, Exchange, ReadResult, ToolRecord
@@ -169,6 +174,18 @@ class CursorAdapter(Adapter):
                 handle.write(json.dumps(record) + "\n")
         except OSError as exc:
             raise TranscriptError(f"Could not spool Cursor hook data: {path}") from exc
+
+    def latest_session(self, repo: Path) -> SessionRef | None:
+        # Prompt records in each spool carry the workspace root as "cwd".
+        def probe(path: Path) -> tuple[str, str] | None:
+            for record in jsonl_head(path):
+                if isinstance(record.get("cwd"), str):
+                    return path.stem, record["cwd"]
+            return None
+
+        spools = _spool_path("x").parent
+        files = spools.glob("*.jsonl") if spools.is_dir() else []
+        return newest_session_in_repo(files, probe, repo, transcript=False)
 
     def read_new(self, session: SessionRef, cursor: Cursor) -> ReadResult:
         path = _spool_path(session.session_id)

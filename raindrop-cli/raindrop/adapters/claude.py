@@ -34,6 +34,8 @@ from raindrop.adapters._common import (
     display_cmd,
     exe,
     is_our_hook_command,
+    jsonl_head,
+    newest_session_in_repo,
     quote_cmd,
     strip_rules_block,
     load_json_text,
@@ -325,6 +327,18 @@ class ClaudeCodeAdapter(Adapter):
         return SessionRef(
             session_id=session_id, transcript_path=path, cwd=payload.get("cwd")
         )
+
+    def latest_session(self, repo: Path) -> SessionRef | None:
+        # Transcripts live at projects/<cwd-slug>/<session_id>.jsonl. The slug
+        # is lossy, so match on the `cwd` recorded inside each transcript.
+        def probe(path: Path) -> tuple[str, str] | None:
+            for entry in jsonl_head(path):
+                if isinstance(entry.get("cwd"), str):
+                    return path.stem, entry["cwd"]
+            return None
+
+        files = constants.claude_dir().glob("projects/*/*.jsonl")
+        return newest_session_in_repo(files, probe, repo)
 
     def read_new(self, session: SessionRef, cursor: Cursor) -> ReadResult:
         path = session.transcript_path

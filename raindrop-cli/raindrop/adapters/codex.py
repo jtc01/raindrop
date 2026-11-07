@@ -3,18 +3,25 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from raindrop.adapters._common import json_change, validate_session_id
+from raindrop.adapters._common import (
+    json_change,
+    jsonl_head,
+    newest_session_in_repo,
+    validate_session_id,
+)
 from raindrop.adapters.base import Adapter, Change, SessionRef
 from raindrop.errors import TranscriptError
 from raindrop.models import Cursor, Exchange, ReadResult, ToolRecord
 
 HOOK_MARKER = "raindrop sync --tool codex"
+_UUID_TAIL = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
 def _codex_dir() -> Path:
@@ -203,6 +210,30 @@ class CodexAdapter(Adapter):
             transcript_path=transcript,
             cwd=cwd if isinstance(cwd, str) else None,
         )
+
+    def latest_session(self, repo: Path) -> SessionRef | None:
+        # Rollouts live at sessions/YYYY/MM/DD/rollout-<time>-<uuid>.jsonl and
+        # open with a session_meta record carrying the id and cwd.
+        def probe(path: Path) -> tuple[str, str] | None:
+            session_id = cwd = None
+            for record in jsonl_head(path):
+                payload = record.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                if record.get("type") == "session_meta" and isinstance(payload.get("id"), str):
+                    session_id = payload["id"]
+                if cwd is None and isinstance(payload.get("cwd"), str):
+                    cwd = payload["cwd"]
+                if session_id and cwd:
+                    break
+            if session_id is None:
+                m = _UUID_TAIL.search(path.stem)
+                session_id = m.group(0) if m else None
+            return (session_id, cwd) if session_id and cwd else None
+
+        root = _session_root()
+        files = root.rglob("*.jsonl") if root.is_dir() else []
+        return newest_session_in_repo(files, probe, repo)
 
     def read_new(self, session: SessionRef, cursor: Cursor) -> ReadResult:
         path = session.transcript_path
