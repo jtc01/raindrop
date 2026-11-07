@@ -1,0 +1,45 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: raindrop API (REST + MCP on one Lambda via Lambda Web Adapter)
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 1024
+
+Resources:
+  RaindropApi:
+    Type: AWS::Serverless::HttpApi
+
+  RaindropFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Runtime: python3.12
+      Architectures: [arm64]
+      Handler: run.sh
+      Layers:
+        - !Sub arn:aws:lambda:${AWS::Region}:753240598075:layer:LambdaAdapterLayerArm64:27
+      Environment:
+        Variables:
+          AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap
+          PORT: 8080
+          AWS_LWA_READINESS_CHECK_PATH: /health
+      Events:
+        Root:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref RaindropApi
+            Path: /
+            Method: ANY
+        Proxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref RaindropApi
+            Path: /{proxy+}
+            Method: ANY
+
+Outputs:
+  ApiUrl:
+    Description: Base URL for the raindrop API
+    Value: !Sub https://${RaindropApi}.execute-api.${AWS::Region}.amazonaws.com
