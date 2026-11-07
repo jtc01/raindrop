@@ -184,11 +184,10 @@ def search_team_context(query: str, top_k: int = 8) -> dict:
     ident = current_identity()
     top_k = max(1, min(int(top_k), SEARCH_TOP_K_MAX))
     results = search.search(ident["team_id"], query, top_k)
-    names = {m["agent_id"]: m["display_name"] for m in list_team_members(ident["team_id"])}
     return {
         "query": query,
         "results": [{
-            "display_name": names.get(r.get("agent_id"), r.get("agent_id") or "unknown"),
+            "display_name": r.get("display_name") or r.get("agent_id") or "unknown",
             "agent_id": r.get("agent_id"),
             "ts": r.get("ts"),
             "files_touched": r.get("files_touched", []),
@@ -511,9 +510,10 @@ def _validate_exchange(ex) -> str | None:
 async def push_messages(request: Request) -> JSONResponse:
     """Sync endpoint for the Stop hook. Body matches PushMessagesRequest:
     {"exchanges": [ExchangeWire, ...]} (max 50). Returns {"accepted", "ids"}.
-    Each exchange is written to S3 and embedded into S3 Vectors by
-    messages.ingest_exchanges. Idempotent: the S3 key and vector id derive from
-    session_id + idx, so retries overwrite."""
+    messages.ingest_exchanges is the only writer: it stamps each validated
+    exchange with the caller's identity, writes the resulting document to S3,
+    and embeds it into S3 Vectors. Idempotent: the S3 key and vector id derive
+    from session_id + idx, so retries overwrite."""
     raw = await request.body()
     if len(raw) > MAX_PUSH_BYTES:
         return error(413, "too_large", f"Body exceeds {MAX_PUSH_BYTES} bytes; send smaller batches.")
@@ -532,29 +532,10 @@ async def push_messages(request: Request) -> JSONResponse:
             return error(400, "bad_request", f"exchanges[{i}]: {msg}")
 
     ident = request.state.raindrop  # set by AuthMiddleware; never trust the body for identity
-    received_at = int(time.time())
 
-    def build(ex: dict) -> dict:
-        """Whitelisted copy of the validated exchange, stamped with the caller's identity."""
-        return {
-            "id": f"{ex['session_id']}:{ex['idx']}",  # recomputed server-side
-            "session_id": ex["session_id"],
-            "idx": ex["idx"],
-            "ts": ex["ts"],
-            "user_text": ex["user_text"],
-            "assistant_text": ex["assistant_text"],
-            "tool_summaries": ex.get("tool_summaries", []),
-            "files_touched": ex.get("files_touched", []),
-            "team_id": ident["team_id"],
-            "agent_id": ident["agent_id"],
-            "display_name": ident["display_name"],
-            "received_at": received_at,
-        }
-
-    docs = [build(ex) for ex in exchanges]
     try:
         result = await anyio.to_thread.run_sync(
-            lambda: messages.ingest_exchanges(ident["team_id"], ident["agent_id"], docs))
+            lambda: messages.ingest_exchanges(ident, exchanges))
     except Exception:
         return error(500, "storage_failed", "Could not store exchanges; retry the same batch.")
     if not result.get("accepted"):
