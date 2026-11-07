@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-CLI_DIR = Path(__file__).resolve().parents[1] / "teamctx-cli"
+CLI_DIR = Path(__file__).resolve().parents[2] / "teamctx-cli"
 if str(CLI_DIR) not in sys.path:
     sys.path.insert(0, str(CLI_DIR))
 

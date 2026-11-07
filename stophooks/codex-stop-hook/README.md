@@ -19,7 +19,7 @@ same exchange ID, which the API stores idempotently.
 ## Requirements
 
 - Python 3.10+
-- `teamctx-cli` alongside this folder in the Raindrop repository
+- `teamctx-cli` alongside the `stophooks` folder in the Raindrop repository
 - A joined Raindrop team (`raindrop join ...`)
 - Codex with hooks enabled and an accessible `~/.codex/sessions` transcript
 
@@ -37,8 +37,8 @@ repository on your machine:
         "hooks": [
           {
             "type": "command",
-            "commandWindows": "py -3 \"C:\\path\\to\\raindrop\\codex-stop-hook\\stop_sync.py\"",
-            "command": "python3 \"/path/to/raindrop/codex-stop-hook/stop_sync.py\"",
+            "commandWindows": "py -3 \"C:\\path\\to\\raindrop\\stophooks\\codex-stop-hook\\stop_sync.py\"",
+            "command": "python3 \"/path/to/raindrop/stophooks/codex-stop-hook/stop_sync.py\"",
             "timeout": 30,
             "statusMessage": "Syncing Codex turn to Raindrop"
           }
@@ -56,10 +56,10 @@ exchange.
 
 ## Tests
 
-From this directory:
+From the repository root:
 
 ```powershell
-py -3 -m unittest -v
+py -3 -m unittest discover -s stophooks/codex-stop-hook -p "test_*.py" -v
 ```
 
 This is a prototype against the current local Raindrop interfaces. Confirm the

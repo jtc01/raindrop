@@ -25,7 +25,7 @@ repository's absolute path:
   "hooks": {
     "stop": [
       {
-        "command": "py -3 \"C:\\path\\to\\raindrop\\cursor-stop-hook\\capture.py\"",
+        "command": "py -3 \"C:\\path\\to\\raindrop\\stophooks\\cursor-stop-hook\\capture.py\"",
         "timeout": 30
       }
     ]
@@ -54,5 +54,5 @@ This folder does not modify `teamctx-cli` or install the hook automatically.
 From the repository root:
 
 ```powershell
-py -3 -m unittest discover -s cursor-stop-hook -p "test_*.py" -v
+py -3 -m unittest discover -s stophooks/cursor-stop-hook -p "test_*.py" -v
 ```
