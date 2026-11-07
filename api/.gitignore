@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+.aws-sam/
+.env
+*.pem
+y
