@@ -1,121 +1,209 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { useLayoutEffect, useMemo, useRef, useState } from "react"
+import { exchanges, now, teammates, team } from "./data.js"
+import "./App.css"
 
-function App() {
-  const [count, setCount] = useState(0)
+const ACTIVE_MS = 30 * 60 * 1000
+
+function formatAgo(ts) {
+  const minutes = Math.round((now - ts) / 60000)
+  if (minutes < 1) return "just now"
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.round(hours / 24)
+  return days === 1 ? "1d ago" : `${days}d ago`
+}
+
+function personById(id) {
+  return teammates.find((person) => person.id === id)
+}
+
+function Reply({ id, text, open, onToggle }) {
+  const ref = useRef(null)
+  const [overflows, setOverflows] = useState(false)
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const measure = () => {
+      if (open) return
+      setOverflows(el.scrollHeight > el.clientHeight + 1)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [text, open])
 
   return (
     <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
+      <p ref={ref} className={open ? "reply" : "reply clamped"}>
+        {text}
+      </p>
+      {overflows && (
         <button
           type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
+          className="more"
+          aria-expanded={open}
+          onClick={() => onToggle(id)}
         >
-          Count is {count}
+          {open ? "Show less" : "Show full reply"}
         </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
+      )}
     </>
+  )
+}
+
+function App() {
+  const [selectedId, setSelectedId] = useState(null)
+  const [query, setQuery] = useState("")
+  const [openId, setOpenId] = useState(null)
+
+  const lastActive = useMemo(() => {
+    const times = {}
+    for (const exchange of exchanges) {
+      times[exchange.agentId] = Math.max(times[exchange.agentId] ?? 0, exchange.ts)
+    }
+    return times
+  }, [])
+
+  const newest = useMemo(
+    () => Math.max(...exchanges.map((exchange) => exchange.ts)),
+    [],
+  )
+
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    return exchanges
+      .filter((exchange) => !selectedId || exchange.agentId === selectedId)
+      .filter((exchange) => {
+        if (!needle) return true
+        const person = personById(exchange.agentId)
+        const haystack = [
+          exchange.prompt,
+          exchange.reply,
+          person?.name,
+          person?.focus,
+          ...exchange.files,
+        ]
+          .join("\n")
+          .toLowerCase()
+        return haystack.includes(needle)
+      })
+      .sort((a, b) => b.ts - a.ts)
+  }, [query, selectedId])
+
+  function selectPerson(id) {
+    setSelectedId((current) => (current === id ? null : id))
+  }
+
+  return (
+    <div className="app">
+      <header className="top">
+        <div className="brand">
+          <p className="product">{team.product}</p>
+          <h1>{team.name}</h1>
+        </div>
+        <p className="status">
+          <span>{teammates.length} people</span>
+          <span className="sep" aria-hidden="true" />
+          <span>last sync {formatAgo(newest)}</span>
+        </p>
+      </header>
+
+      <div className="body">
+        <aside className="roster" aria-label="Teammates">
+          <button
+            type="button"
+            className={selectedId ? "person" : "person selected"}
+            aria-pressed={selectedId === null}
+            onClick={() => setSelectedId(null)}
+          >
+            <span className="who">
+              <span className="name">Everyone</span>
+              <span className="focus">{exchanges.length} exchanges</span>
+            </span>
+          </button>
+          {teammates.map((person) => {
+            const active = now - lastActive[person.id] < ACTIVE_MS
+            const selected = selectedId === person.id
+            return (
+              <button
+                key={person.id}
+                type="button"
+                className={selected ? "person selected" : "person"}
+                aria-pressed={selected}
+                onClick={() => selectPerson(person.id)}
+              >
+                <span
+                  className={active ? "presence on" : "presence"}
+                  title={active ? "Synced in the last 30 minutes" : "Idle"}
+                />
+                <span className="who">
+                  <span className="name">{person.name}</span>
+                  <span className="focus">{person.focus}</span>
+                </span>
+                <span className="when">{formatAgo(lastActive[person.id])}</span>
+              </button>
+            )
+          })}
+        </aside>
+
+        <main className="feed">
+          <form className="search" role="search" onSubmit={(event) => event.preventDefault()}>
+            <label htmlFor="q">Search</label>
+            <input
+              id="q"
+              type="search"
+              value={query}
+              placeholder="Search prompts, replies, or files"
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <p className="count">
+              {visible.length} of {exchanges.length} exchanges
+            </p>
+          </form>
+
+          {visible.length === 0 ? (
+            <p className="empty">Nothing matches that search.</p>
+          ) : (
+            <ol className="cards">
+              {visible.map((exchange) => {
+                const person = personById(exchange.agentId)
+                const open = openId === exchange.id
+                return (
+                  <li key={exchange.id}>
+                    <article className="card">
+                      <header className="card-meta">
+                        <span className="name">{person.name}</span>
+                        <span className="focus">{person.focus}</span>
+                        <time dateTime={new Date(exchange.ts).toISOString()}>
+                          {formatAgo(exchange.ts)}
+                        </time>
+                      </header>
+                      <h2>{exchange.prompt}</h2>
+                      <Reply
+                        id={exchange.id}
+                        text={exchange.reply}
+                        open={open}
+                        onToggle={(id) =>
+                          setOpenId((current) => (current === id ? null : id))
+                        }
+                      />
+                      <ul className="files">
+                        {exchange.files.map((file) => (
+                          <li key={file}>{file}</li>
+                        ))}
+                      </ul>
+                    </article>
+                  </li>
+                )
+              })}
+            </ol>
+          )}
+        </main>
+      </div>
+    </div>
   )
 }
 
