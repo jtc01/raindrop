@@ -118,6 +118,14 @@ class Adapter(ABC):
         that prompt, not EOF, so it is picked up on the next run.
         """
 
+    def hook_stdout(self) -> str | None:
+        """Text `raindrop sync` prints to stdout when this tool's hook finishes.
+
+        Almost always None: some tools add a hook's stdout to the agent's context.
+        A tool whose Stop hook must answer on stdout (Antigravity wants a JSON
+        decision) returns that answer here."""
+        return None
+
     def capture(self, payload: dict) -> None:
         """Event-capture tools (no readable transcript) override this to spool
         hook events locally. Transcript-tail adapters leave it alone."""

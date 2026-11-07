@@ -103,6 +103,16 @@ def _log_failure(message: str) -> None:
         pass
 
 
+def _hook_reply(tool: str) -> None:
+    """Print the tool's required hook answer, if it has one (see Adapter.hook_stdout)."""
+    try:
+        reply = get_adapter(tool).hook_stdout()
+    except Exception:
+        return
+    if reply:
+        typer.echo(reply)
+
+
 def sync(
     tool: str = typer.Option("claude-code", "--tool", help="Which tool's hook is calling."),
     fail_open: bool = typer.Option(
@@ -113,7 +123,8 @@ def sync(
 ):
     """Sync new exchanges to your team. Reads the hook's JSON payload from stdin.
 
-    Output goes to stderr only: some tools add a hook's stdout to the agent's context.
+    Output goes to stderr only (some tools add a hook's stdout to the agent's context), except
+    for the answer a tool requires on stdout (Adapter.hook_stdout).
     """
     try:
         payload = json.load(sys.stdin)
@@ -124,6 +135,9 @@ def sync(
         message = getattr(e, "message", None) or str(e)
         _log_failure(f"{tool}: {message}")
         typer.secho(f"raindrop sync failed: {message}", fg="red", err=True)
+        if fail_open:
+            _hook_reply(tool)
         raise typer.Exit(0 if fail_open else 1)
+    _hook_reply(tool)
     if n:
         typer.echo(f"raindrop synced {n} exchange{'' if n == 1 else 's'}.", err=True)
