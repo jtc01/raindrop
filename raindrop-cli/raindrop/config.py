@@ -53,7 +53,17 @@ def permissions_ok() -> bool | None:
         return False
 
 
-# ---------- sharing pause (checked by sync) ----------
+# ---------- sharing (checked by sync) ----------
+#
+# config["sharing"] = {
+#   "mode": "opt_in" | "all",   # opt_in (default): only shared_repos upload
+#   "shared_repos": [...],        # repo roots added with `raindrop share --repo`
+#   "paused": bool,              # `raindrop pause`: wins over everything
+#   "paused_repos": [...],        # `raindrop pause --repo`
+# }
+
+SHARING_MODES = ("opt_in", "all")
+DEFAULT_SHARING_MODE = "opt_in"
 
 def repo_root(path: str | os.PathLike | None = None) -> Path:
     """The git repo containing `path` (default: cwd), or the path itself if not in a repo."""
@@ -75,12 +85,35 @@ def sharing_paused(path: str | os.PathLike | None = None, cfg: dict | None = Non
     return str(repo_root(path)) in sharing.get("paused_repos", [])
 
 
+def sharing_mode(cfg: dict | None = None) -> str:
+    """'opt_in' unless the config explicitly says 'all'. Missing or unknown values
+    (including every config written before modes existed) mean opt-in."""
+    cfg = cfg if cfg is not None else (load() or {})
+    mode = cfg.get("sharing", {}).get("mode")
+    return mode if mode in SHARING_MODES else DEFAULT_SHARING_MODE
+
+
+def should_share(path: str | os.PathLike | None = None, cfg: dict | None = None) -> bool:
+    """Whether content from the repo containing `path` may be uploaded.
+    False if paused globally or for this repo. Otherwise true in 'all' mode, and in
+    'opt_in' mode only if the repo root was added with `raindrop share --repo`.
+    Sync calls this with the session's working directory and, when it returns False,
+    advances the cursor WITHOUT uploading, so skipped content is never shared later."""
+    cfg = cfg if cfg is not None else (load() or {})
+    if sharing_paused(path, cfg):
+        return False
+    if sharing_mode(cfg) == "all":
+        return True
+    return str(repo_root(path)) in cfg.get("sharing", {}).get("shared_repos", [])
+
+
 def build(api_url: str, resp: dict, display_name: str, focus: str, existing: dict | None) -> dict:
     """Turns a /teams or /join response into a config. Keeps installed tools
     only if rejoining the same team."""
     same_team = existing and existing.get("team_id") == resp["team_id"]
     tools = existing.get("tools", {}) if same_team else {}
-    sharing = existing.get("sharing", {}) if existing else {}  # pause settings survive rejoining
+    sharing = dict(existing.get("sharing", {})) if existing else {}  # sharing settings survive rejoining
+    sharing.setdefault("mode", DEFAULT_SHARING_MODE)
     return {
         "api_url": api_url.rstrip("/"),
         "api_key": resp["api_key"],

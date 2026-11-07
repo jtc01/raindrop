@@ -68,6 +68,13 @@ def run_sync(payload: dict, tool: str, transport: httpx.BaseTransport | None = N
 
     result = adapter.read_new(session, cursor)
 
+    if not config.should_share(session.cwd, cfg):
+        # Paused, or opt-in mode and this repo isn't shared: advance past the
+        # content without uploading so it is skipped for good, never queued.
+        if result.new_cursor != cursor:
+            _save_cursor(cursor_file, result.new_cursor)
+        return 0
+
     secrets = [cfg["api_key"]]
     if session.cwd:
         secrets += load_env_secrets(Path(session.cwd))
