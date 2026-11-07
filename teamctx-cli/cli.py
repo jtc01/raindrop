@@ -7,6 +7,9 @@
   raindrop doctor        # check your setup
   raindrop rotate-key    # replace a leaked key
   raindrop leave         # revoke your key and remove local config
+  raindrop remove Dante  # (lead) remove a teammate
+  raindrop codes         # list join codes; `codes revoke <code>` cancels one
+  raindrop pause [--repo] / resume [--repo]   # stop/start sharing context
   raindrop whoami
 
 Other owners add their commands (sync, tools add, proxy) to `app` below.
@@ -151,8 +154,119 @@ def teammates():
     typer.secho(f"{cfg.get('team_name') or resp['team_id']}: {len(members)} member(s)", bold=True)
     width = max((len(m["display_name"]) for m in members), default=4)
     for m in members:
-        marker = typer.style(" (you)", fg="green") if m["you"] else ""
-        typer.echo(f"  {m['display_name']:<{width}}  {m['focus'] or '-'}{marker}")
+        tags = []
+        if m.get("lead"):
+            tags.append(typer.style("lead", fg="yellow"))
+        if m["you"]:
+            tags.append(typer.style("you", fg="green"))
+        suffix = f"  ({', '.join(tags)})" if tags else ""
+        typer.echo(f"  {m['display_name']:<{width}}  {m['focus'] or '-'}{suffix}")
+
+
+@app.command("remove")
+def remove(
+    who: str = typer.Argument(..., help="Teammate's display name or agent id."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+):
+    """(Team lead) Remove a teammate: their key stops working. Shared context stays."""
+    cfg = _require_config()
+    members = _authed(api_client.teammates, cfg)["members"]
+    matches = [m for m in members if m["agent_id"] == who] or \
+              [m for m in members if m["display_name"].lower() == who.lower()]
+    if not matches:
+        typer.secho(f"No teammate named '{who}'. See `raindrop teammates`.", fg="red", err=True)
+        raise typer.Exit(1)
+    if len(matches) > 1:
+        typer.secho(f"Several teammates are named '{who}'. Use an agent id:", fg="yellow", err=True)
+        for m in matches:
+            typer.echo(f"  {m['agent_id']}  {m['display_name']}  {m['focus'] or '-'}", err=True)
+        raise typer.Exit(1)
+    target = matches[0]
+    if not yes:
+        typer.confirm(f"Remove {target['display_name']} from the team? Their key will stop working.",
+                      abort=True)
+    try:
+        api_client.remove(cfg["api_url"], cfg["api_key"], target["agent_id"])
+    except api_client.ApiError as e:
+        _fail(e)
+    typer.secho(f"Removed {target['display_name']}.", fg="green")
+    typer.echo("Their key may keep working for up to a minute while server caches expire.")
+
+
+codes_app = typer.Typer(help="List or revoke your team's join codes.", invoke_without_command=True)
+app.add_typer(codes_app, name="codes")
+
+
+@codes_app.callback()
+def codes(ctx: typer.Context):
+    """List active join codes. Codes are stored hashed, so each is shown by a short id."""
+    if ctx.invoked_subcommand:
+        return
+    import datetime
+    cfg = _require_config()
+    rows = _authed(api_client.list_codes, cfg)["codes"]
+    if not rows:
+        typer.echo("No active join codes. Create one with `raindrop invite`.")
+        return
+    typer.secho(f"{len(rows)} active join code(s)", bold=True)
+    for c in rows:
+        exp = datetime.datetime.fromtimestamp(c["expires_at"]).strftime("%a %H:%M")
+        typer.echo(f"  {c['id']}  by {c['created_by']:<14} uses {c['uses']:<3} expires {exp}")
+    typer.echo("Revoke one with `raindrop codes revoke <code-or-id>`.")
+
+
+@codes_app.command("revoke")
+def codes_revoke(code: str = typer.Argument(..., help="The join code (AWB3-V69V) or its id from `raindrop codes`.")):
+    """Cancel a join code so nobody else can use it."""
+    cfg = _require_config()
+    looks_like_code = len(code.replace("-", "").replace(" ", "")) == 8  # ids are 10 chars
+    try:
+        if looks_like_code:
+            resp = api_client.revoke_code(cfg["api_url"], cfg["api_key"], code=code)
+        else:
+            resp = api_client.revoke_code(cfg["api_url"], cfg["api_key"], code_id=code)
+    except api_client.ApiError as e:
+        _fail(e)
+    typer.secho(f"Revoked join code {resp['revoked']}.", fg="green")
+
+
+@app.command("pause")
+def pause(repo: bool = typer.Option(False, "--repo", help="Pause only the git repo you're in.")):
+    """Stop sharing your agent context with the team (everywhere, or for one repo)."""
+    cfg = _require_config()
+    sharing = cfg.setdefault("sharing", {})
+    if repo:
+        root = str(config.repo_root())
+        repos = sharing.setdefault("paused_repos", [])
+        if root not in repos:
+            repos.append(root)
+        msg = f"Sharing paused for {root}."
+    else:
+        sharing["paused"] = True
+        msg = "Sharing paused everywhere."
+    config.save(cfg)
+    typer.secho(msg, fg="yellow")
+    typer.echo("Conversations while paused are skipped, not queued: they won't upload when you resume.")
+
+
+@app.command("resume")
+def resume(repo: bool = typer.Option(False, "--repo", help="Resume only the git repo you're in.")):
+    """Resume sharing your agent context with the team."""
+    cfg = _require_config()
+    sharing = cfg.setdefault("sharing", {})
+    if repo:
+        root = str(config.repo_root())
+        sharing["paused_repos"] = [r for r in sharing.get("paused_repos", []) if r != root]
+        msg = f"Sharing resumed for {root}."
+        if sharing.get("paused"):
+            msg += " (Still paused globally; run `raindrop resume` to resume everywhere.)"
+    else:
+        sharing["paused"] = False
+        msg = "Sharing resumed."
+        if sharing.get("paused_repos"):
+            msg += f" Still paused for {len(sharing['paused_repos'])} repo(s); use `raindrop resume --repo` in them."
+    config.save(cfg)
+    typer.secho(msg, fg="green")
 
 
 @app.command("rotate-key")
@@ -234,6 +348,8 @@ def doctor():
                    "Key rejected. Ask a teammate for `raindrop invite`, then "
                    "`raindrop join <code> --name <name> --force`." if e.status == 401 else e.message)
 
+    report(None, f"Sharing: {_sharing_summary(cfg)}")
+
     tools = cfg.get("tools", {})
     report(bool(tools), f"Tools installed: {', '.join(tools) or 'none'}",
            "Run `raindrop tools add claude-code`.")
@@ -260,6 +376,16 @@ def whoami():
     typer.echo(f"You:    {cfg['display_name']} ({cfg['agent_id']}), focus: {cfg.get('focus') or '-'}")
     typer.echo(f"API:    {cfg['api_url']}")
     typer.echo(f"Tools:  {', '.join(cfg.get('tools', {})) or 'none installed'}")
+    typer.echo(f"Sharing: {_sharing_summary(cfg)}")
+
+
+def _sharing_summary(cfg: dict) -> str:
+    sharing = cfg.get("sharing", {})
+    if sharing.get("paused"):
+        return "paused everywhere"
+    repos = sharing.get("paused_repos", [])
+    here = " (including this repo)" if config.sharing_paused(cfg=cfg) else ""
+    return f"on, paused for {len(repos)} repo(s){here}" if repos else "on"
 
 
 if __name__ == "__main__":

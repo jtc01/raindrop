@@ -28,8 +28,15 @@ Resources:
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - { AttributeName: code_hash, AttributeType: S }
+        - { AttributeName: team_id, AttributeType: S }
       KeySchema:
         - { AttributeName: code_hash, KeyType: HASH }
+      GlobalSecondaryIndexes:
+        - IndexName: by_team
+          KeySchema:
+            - { AttributeName: team_id, KeyType: HASH }
+          Projection:
+            ProjectionType: ALL
       TimeToLiveSpecification:
         AttributeName: expires_at
         Enabled: true

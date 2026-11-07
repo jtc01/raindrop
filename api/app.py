@@ -5,7 +5,8 @@ MCP endpoint:  http://localhost:8080/mcp
 
 Public routes:  GET /health, POST /teams, POST /join
 Authed routes:  /mcp, POST /messages, POST /invite, GET /me, GET /teammates,
-                POST /rotate-key, POST /leave — require `Authorization: Bearer <key>`
+                POST /rotate-key, POST /leave, POST /remove (lead), GET /codes,
+                POST /codes/revoke — require `Authorization: Bearer <key>`
 """
 import hashlib
 import json
@@ -192,7 +193,14 @@ async def create_team(request: Request) -> JSONResponse:
                   "join_code": code, "join_code_expires_at": expires_at}
         display_name = (body.get("display_name") or "").strip()
         if display_name:
-            result.update(create_agent(team_id, display_name, (body.get("focus") or "").strip()))
+            agent = create_agent(team_id, display_name, (body.get("focus") or "").strip())
+            teams.update_item(Key={"team_id": team_id},
+                              UpdateExpression="SET lead_agent_id = :a",
+                              ExpressionAttributeValues={":a": agent["agent_id"]})
+            join_codes.update_item(Key={"code_hash": sha256(normalize_code(code))},
+                                   UpdateExpression="SET created_by = :a",
+                                   ExpressionAttributeValues={":a": agent["agent_id"]})
+            result.update(agent)
         return result
 
     return JSONResponse(await anyio.to_thread.run_sync(work), status_code=201)
@@ -273,14 +281,121 @@ def list_team_members(team_id: str) -> list[dict]:
     return sorted(members.values(), key=lambda m: m["joined_at"])
 
 
+def team_lead(team_id: str, members: list[dict]) -> str | None:
+    """The recorded lead if still active; otherwise the earliest-joined active member.
+    Covers teams created before leads existed and leads who have left."""
+    active = {m["agent_id"] for m in members}
+    team = teams.get_item(Key={"team_id": team_id}).get("Item") or {}
+    lead = team.get("lead_agent_id")
+    if lead in active:
+        return lead
+    return members[0]["agent_id"] if members else None
+
+
 @mcp.custom_route("/teammates", methods=["GET"])
 async def teammates(request: Request) -> JSONResponse:
-    """Authed. Lists active members of the caller's team."""
+    """Authed. Lists active members of the caller's team, flagging you and the lead."""
     ident = request.state.raindrop
-    members = await anyio.to_thread.run_sync(lambda: list_team_members(ident["team_id"]))
-    for m in members:
-        m["you"] = m["agent_id"] == ident["agent_id"]
+
+    def work():
+        members = list_team_members(ident["team_id"])
+        lead = team_lead(ident["team_id"], members)
+        for m in members:
+            m["you"] = m["agent_id"] == ident["agent_id"]
+            m["lead"] = m["agent_id"] == lead
+        return members
+
+    members = await anyio.to_thread.run_sync(work)
     return JSONResponse({"team_id": ident["team_id"], "members": members})
+
+
+@mcp.custom_route("/remove", methods=["POST"])
+async def remove_member(request: Request) -> JSONResponse:
+    """Authed, lead only. Body: {agent_id}. Revokes every active key of that teammate.
+    Their already-shared context stays. Use /leave to remove yourself."""
+    ident = request.state.raindrop
+    try:
+        body = await request.json()
+    except Exception:
+        return error(400, "bad_request", "Body must be JSON.")
+    target = body.get("agent_id") if isinstance(body, dict) else None
+    if not isinstance(target, str) or not target:
+        return error(400, "bad_request", "`agent_id` is required.")
+    if target == ident["agent_id"]:
+        return error(400, "bad_request", "You can't remove yourself; use `raindrop leave`.")
+
+    def work():
+        members = list_team_members(ident["team_id"])
+        if team_lead(ident["team_id"], members) != ident["agent_id"]:
+            return error(403, "not_lead", "Only the team lead can remove teammates.")
+        rows = agents.query(IndexName="by_team",
+                            KeyConditionExpression=Key("team_id").eq(ident["team_id"])).get("Items", [])
+        hits = [r for r in rows if r["agent_id"] == target and r.get("status") == "active"]
+        if not hits:
+            return error(404, "not_found", "No active teammate with that agent_id.")
+        for r in hits:
+            _deactivate(r["key_hash"], "removed")
+        return JSONResponse({"removed": target, "display_name": hits[0].get("display_name")})
+
+    return await anyio.to_thread.run_sync(work)
+
+
+def _code_id(code_hash: str) -> str:
+    return code_hash[:10]
+
+
+@mcp.custom_route("/codes", methods=["GET"])
+async def list_codes(request: Request) -> JSONResponse:
+    """Authed. Active (unexpired) join codes for the caller's team. Codes are stored
+    hashed, so each is identified by a short id rather than shown in full."""
+    ident = request.state.raindrop
+
+    def work():
+        now = int(time.time())
+        rows = join_codes.query(IndexName="by_team",
+                                KeyConditionExpression=Key("team_id").eq(ident["team_id"])).get("Items", [])
+        names = {m["agent_id"]: m["display_name"] for m in list_team_members(ident["team_id"])}
+        codes = [{
+            "id": _code_id(r["code_hash"]),
+            "created_by": names.get(r.get("created_by"), r.get("created_by") or "team creator"),
+            "uses": int(r.get("uses", 0)),
+            "expires_at": int(r["expires_at"]),
+        } for r in rows if int(r["expires_at"]) > now]
+        return sorted(codes, key=lambda c: c["expires_at"], reverse=True)
+
+    return JSONResponse({"team_id": ident["team_id"], "codes": await anyio.to_thread.run_sync(work)})
+
+
+@mcp.custom_route("/codes/revoke", methods=["POST"])
+async def revoke_code(request: Request) -> JSONResponse:
+    """Authed. Body: {code} or {id}. The team lead, or whoever created the code, can revoke it."""
+    ident = request.state.raindrop
+    try:
+        body = await request.json()
+    except Exception:
+        return error(400, "bad_request", "Body must be JSON.")
+    body = body if isinstance(body, dict) else {}
+
+    def work():
+        if body.get("code"):
+            item = join_codes.get_item(
+                Key={"code_hash": sha256(normalize_code(str(body["code"])))}).get("Item")
+        elif body.get("id"):
+            rows = join_codes.query(IndexName="by_team",
+                                    KeyConditionExpression=Key("team_id").eq(ident["team_id"])).get("Items", [])
+            item = next((r for r in rows if _code_id(r["code_hash"]) == str(body["id"]).lower()), None)
+        else:
+            return error(400, "bad_request", "Provide `code` or `id`.")
+        if not item or item["team_id"] != ident["team_id"]:
+            return error(404, "not_found", "No such join code on your team.")
+        members = list_team_members(ident["team_id"])
+        allowed = ident["agent_id"] in (item.get("created_by"), team_lead(ident["team_id"], members))
+        if not allowed:
+            return error(403, "forbidden", "Only the team lead or the code's creator can revoke it.")
+        join_codes.delete_item(Key={"code_hash": item["code_hash"]})
+        return JSONResponse({"revoked": _code_id(item["code_hash"])})
+
+    return await anyio.to_thread.run_sync(work)
 
 
 def _deactivate(key_hash: str, status: str) -> None:
