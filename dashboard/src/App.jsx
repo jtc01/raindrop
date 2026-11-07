@@ -102,7 +102,6 @@ function App() {
       <header className="top">
         <div className="brand">
           <p className="product">{team.product}</p>
-          <h1>{team.name}</h1>
         </div>
         <p className="status">
           <span>{teammates.length} people</span>

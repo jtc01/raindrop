@@ -1,12 +1,12 @@
 :root {
-  --bg: #101210;
-  --panel: #171a16;
-  --panel-2: #1e221c;
-  --line: #2c3128;
-  --text: #eceee6;
-  --muted: #8e9486;
-  --faint: #5c6256;
-  --accent: #c6f04d;
+  --bg: #0d1117;
+  --panel: #131c24;
+  --panel-2: #192532;
+  --line: #1f3044;
+  --text: #e6edf3;
+  --muted: #7d9db5;
+  --faint: #4a6478;
+  --accent: #58a6ff;
   --sans: "IBM Plex Sans", "Segoe UI", sans-serif;
   --mono: "IBM Plex Mono", Consolas, monospace;
   color-scheme: dark;
