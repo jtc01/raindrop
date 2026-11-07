@@ -40,12 +40,22 @@ def ingest_exchanges(team_id: str, agent_id: str, exchanges: list[dict[str, Any]
     ExchangeWire-shaped dicts. Returns a PushMessagesResponse-shaped dict:
     {"accepted": int, "ids": [...]}.
 
-    One exchange failing doesn't abort the batch:
-      - S3 write failure -> skip the exchange entirely (nothing to search for
-        text that was never durably stored).
-      - S3 write succeeds but embedding/vector write fails -> still counted as
-        accepted (the data isn't lost; a retried sync of the same batch will
-        retry the vector write under the same idempotent vector_id).
+    An exchange only counts as accepted once it's fully searchable (S3 write
+    AND embed+vector write both succeeded) -- NOT merely once it's in S3.
+    raindrop-cli's sync_cmd.py compares `accepted` to the batch size and only
+    advances its cursor on a full match (sync_cmd.py:89-90); if a vector
+    write failed but we still reported it accepted, the client would advance
+    past it anyway and the exchange would never be resent, leaving its text
+    durably stored but permanently unsearchable with no way to notice. Under-
+    reporting `accepted` is what makes the client's own retry-on-mismatch
+    logic actually retry.
+
+      - S3 write failure -> skip the exchange entirely (not accepted; nothing
+        to search for text that was never durably stored).
+      - S3 write succeeds but embedding/vector write fails -> also not
+        accepted. The S3 object stays (redundant rewrite on retry is
+        harmless, same key), and the vector write is retried under the same
+        idempotent vector_id next time the client resends this batch.
     """
     accepted_ids: list[str] = []
 
@@ -65,8 +75,6 @@ def ingest_exchanges(team_id: str, agent_id: str, exchanges: list[dict[str, Any]
         except Exception:
             logger.exception("ingest_exchanges: S3 write failed for %s, skipping", vector_id)
             continue
-
-        accepted_ids.append(exchange.get("id", vector_id))
 
         try:
             text = build_exchange_embedding_text(
@@ -89,8 +97,12 @@ def ingest_exchanges(team_id: str, agent_id: str, exchanges: list[dict[str, Any]
             )
         except (EmbeddingError, VectorStoreError):
             logger.exception(
-                "ingest_exchanges: vector_write_failed=true for %s (exchange stored in S3, not yet searchable)",
+                "ingest_exchanges: vector_write_failed=true for %s "
+                "(exchange stored in S3 but NOT counted as accepted, so the client retries it)",
                 vector_id,
             )
+            continue
+
+        accepted_ids.append(exchange.get("id", vector_id))
 
     return {"accepted": len(accepted_ids), "ids": accepted_ids}
