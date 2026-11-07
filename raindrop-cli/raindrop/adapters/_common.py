@@ -233,3 +233,50 @@ def validate_session_id(value: object, tool: str) -> str:
     if not isinstance(value, str) or not _SESSION_ID_RE.fullmatch(value) or ".." in value:
         raise TranscriptError(f"Hook payload has no valid {tool} session ID")
     return value
+
+
+# ---------------------------------------------------------------------------
+# Rules block: our text between delimiters inside a file the user also edits
+# ---------------------------------------------------------------------------
+
+
+def rules_block() -> str:
+    return f"{constants.RULES_START}\n{RULES_BODY}\n{constants.RULES_END}"
+
+
+def strip_rules_block(text: str) -> str:
+    start = text.find(constants.RULES_START)
+    end = text.find(constants.RULES_END)
+    if start == -1 or end == -1 or end < start:
+        return text
+    end += len(constants.RULES_END)
+    # Swallow the blank line we added before the block.
+    head = text[:start].rstrip("\n")
+    tail = text[end:].lstrip("\n")
+    if head and tail:
+        return head + "\n\n" + tail
+    return (head + "\n" if head else "") + tail
+
+
+def add_rules_block(text: str) -> str:
+    base = strip_rules_block(text)
+    block = rules_block() + "\n"
+    if not base.strip():
+        return block
+    return base.rstrip("\n") + "\n\n" + block
+
+
+class NoSyncMixin:
+    """For adapters that only install the MCP server and rules so far.
+
+    session_from_hook/read_new are abstract on Adapter, so they need a body.
+    Whoever writes this tool's stop hook replaces these two methods.
+    """
+
+    display_name: str
+
+    def session_from_hook(self, payload: dict):
+        raise TranscriptError(f"Auto-sync isn't available for {self.display_name} yet.")
+
+    def read_new(self, session, cursor):
+        raise TranscriptError(f"Auto-sync isn't available for {self.display_name} yet.")

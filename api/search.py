@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Optional
+from typing import Any
 
 import boto3
 from botocore.config import Config
@@ -42,24 +42,39 @@ def _rerank_score(similarity: float, ts: int, now: int) -> float:
     return RERANK_SIMILARITY_WEIGHT * similarity + (1 - RERANK_SIMILARITY_WEIGHT) * recency
 
 
-def _hydrate(match: VectorMatch) -> Optional[dict[str, Any]]:
+def _hydrate(match: VectorMatch) -> dict[str, Any]:
+    """Full text lives in S3; vector metadata carries enough (display_name,
+    session_id, idx, preview, ...) to still return something useful if that
+    fetch fails, instead of dropping the result entirely.
+    """
+    base = {
+        "agent_id": match.metadata.get("agent_id"),
+        "display_name": match.metadata.get("display_name"),
+        "session_id": match.metadata.get("session_id"),
+        "idx": match.metadata.get("idx"),
+        "ts": match.metadata.get("ts"),
+        "files_touched": match.metadata.get("files_touched", []),
+        "similarity": match.similarity,
+        "preview": match.metadata.get("preview"),
+    }
     s3_key = match.metadata.get("s3_key")
     if not s3_key:
-        logger.error("search: vector %s has no s3_key in metadata, dropping", match.vector_id)
-        return None
+        logger.error("search: vector %s has no s3_key in metadata, falling back to vector metadata", match.vector_id)
+        return {**base, "user_text": None, "assistant_text": None}
+
     try:
         obj = _s3.get_object(Bucket=EXCHANGES_BUCKET, Key=s3_key)
         exchange = json.loads(obj["Body"].read())
     except Exception:
         logger.exception(
-            "search: failed to hydrate %s from s3://%s/%s, dropping", match.vector_id, EXCHANGES_BUCKET, s3_key
+            "search: failed to hydrate %s from s3://%s/%s, falling back to vector metadata",
+            match.vector_id, EXCHANGES_BUCKET, s3_key,
         )
-        return None
+        return {**base, "user_text": None, "assistant_text": None}
 
     return {
-        "agent_id": match.metadata.get("agent_id"),
-        "ts": match.metadata.get("ts"),
-        "files_touched": match.metadata.get("files_touched", []),
+        **base,
+        "display_name": exchange.get("display_name", base["display_name"]),
         "user_text": exchange.get("user_text"),
         "assistant_text": exchange.get("assistant_text"),
     }
@@ -90,9 +105,8 @@ def search(team_id: str, query_text: str, top_k: int = SEARCH_TOP_K_DEFAULT) -> 
         for future in as_completed(future_to_match):
             match = future_to_match[future]
             hydrated = future.result()
-            if hydrated is not None:
-                hydrated["score"] = _rerank_score(match.similarity, match.metadata.get("ts", 0), now)
-                hydrated_by_vector_id[match.vector_id] = hydrated
+            hydrated["score"] = _rerank_score(match.similarity, match.metadata.get("ts", 0), now)
+            hydrated_by_vector_id[match.vector_id] = hydrated
 
     # Hydration completes out of order (concurrent futures); reassemble in rerank order.
-    return [hydrated_by_vector_id[m.vector_id] for m in top if m.vector_id in hydrated_by_vector_id]
+    return [hydrated_by_vector_id[m.vector_id] for m in top]

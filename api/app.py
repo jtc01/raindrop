@@ -3,7 +3,7 @@
 Run locally:   uvicorn app:app --port 8080
 MCP endpoint:  http://localhost:8080/mcp
 
-MCP tools:      ping, whoami, search_team_context, list_teammates
+MCP tools:      ping, whoami, search_team_context, get_recent_activity, list_teammates
 Public routes:  GET /health, POST /teams, POST /join
 Authed routes:  /mcp, POST /messages, POST /invite, GET /me, GET /teammates,
                 POST /rotate-key, POST /leave, POST /remove (lead), GET /codes,
@@ -27,6 +27,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 import messages  # ingestion: S3 write + Titan embedding + S3 Vectors upsert
+import recent  # newest exchanges straight from S3 (no embedding)
 import search  # retrieval: embed query, scoped vector search, rerank, hydrate
 
 # ---------- config ----------
@@ -184,17 +185,44 @@ def search_team_context(query: str, top_k: int = 8) -> dict:
     ident = current_identity()
     top_k = max(1, min(int(top_k), SEARCH_TOP_K_MAX))
     results = search.search(ident["team_id"], query, top_k)
-    names = {m["agent_id"]: m["display_name"] for m in list_team_members(ident["team_id"])}
     return {
         "query": query,
         "results": [{
-            "display_name": names.get(r.get("agent_id"), r.get("agent_id") or "unknown"),
+            "display_name": r.get("display_name") or r.get("agent_id") or "unknown",
             "agent_id": r.get("agent_id"),
             "ts": r.get("ts"),
             "files_touched": r.get("files_touched", []),
             "user_text": _trim(r.get("user_text")),
             "assistant_text": _trim(r.get("assistant_text")),
             "score": round(float(r.get("score", 0.0)), 4),
+        } for r in results],
+    }
+
+
+RECENT_N_MAX = 25
+
+
+@mcp.tool
+def get_recent_activity(n: int = 10, include_self: bool = False) -> dict:
+    """The n newest exchanges (prompt + reply + files touched) from your teammates'
+    agents, newest first. Use it to catch up on what the team has been doing without
+    a specific question; use search_team_context when you are looking for something
+    particular. Your own exchanges are left out unless include_self is true."""
+    ident = current_identity()
+    n = max(1, min(int(n), RECENT_N_MAX))
+    results = recent.recent_activity(
+        ident["team_id"], n, exclude_agent_id=None if include_self else ident["agent_id"]
+    )
+    names = {m["agent_id"]: m["display_name"] for m in list_team_members(ident["team_id"])}
+    return {
+        "results": [{
+            "display_name": names.get(r.get("agent_id"), r.get("agent_id") or "unknown"),
+            "agent_id": r.get("agent_id"),
+            "session_id": r.get("session_id"),
+            "ts": r.get("ts"),
+            "files_touched": r.get("files_touched", []),
+            "user_text": _trim(r.get("user_text")),
+            "assistant_text": _trim(r.get("assistant_text")),
         } for r in results],
     }
 
@@ -511,9 +539,10 @@ def _validate_exchange(ex) -> str | None:
 async def push_messages(request: Request) -> JSONResponse:
     """Sync endpoint for the Stop hook. Body matches PushMessagesRequest:
     {"exchanges": [ExchangeWire, ...]} (max 50). Returns {"accepted", "ids"}.
-    Each exchange is written to S3 and embedded into S3 Vectors by
-    messages.ingest_exchanges. Idempotent: the S3 key and vector id derive from
-    session_id + idx, so retries overwrite."""
+    messages.ingest_exchanges is the only writer: it stamps each validated
+    exchange with the caller's identity, writes the resulting document to S3,
+    and embeds it into S3 Vectors. Idempotent: the S3 key and vector id derive
+    from session_id + idx, so retries overwrite."""
     raw = await request.body()
     if len(raw) > MAX_PUSH_BYTES:
         return error(413, "too_large", f"Body exceeds {MAX_PUSH_BYTES} bytes; send smaller batches.")
@@ -532,29 +561,10 @@ async def push_messages(request: Request) -> JSONResponse:
             return error(400, "bad_request", f"exchanges[{i}]: {msg}")
 
     ident = request.state.raindrop  # set by AuthMiddleware; never trust the body for identity
-    received_at = int(time.time())
 
-    def build(ex: dict) -> dict:
-        """Whitelisted copy of the validated exchange, stamped with the caller's identity."""
-        return {
-            "id": f"{ex['session_id']}:{ex['idx']}",  # recomputed server-side
-            "session_id": ex["session_id"],
-            "idx": ex["idx"],
-            "ts": ex["ts"],
-            "user_text": ex["user_text"],
-            "assistant_text": ex["assistant_text"],
-            "tool_summaries": ex.get("tool_summaries", []),
-            "files_touched": ex.get("files_touched", []),
-            "team_id": ident["team_id"],
-            "agent_id": ident["agent_id"],
-            "display_name": ident["display_name"],
-            "received_at": received_at,
-        }
-
-    docs = [build(ex) for ex in exchanges]
     try:
         result = await anyio.to_thread.run_sync(
-            lambda: messages.ingest_exchanges(ident["team_id"], ident["agent_id"], docs))
+            lambda: messages.ingest_exchanges(ident, exchanges))
     except Exception:
         return error(500, "storage_failed", "Could not store exchanges; retry the same batch.")
     if not result.get("accepted"):

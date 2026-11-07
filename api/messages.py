@@ -4,6 +4,7 @@ search.py can find it later. Called from app.py's POST /messages route.
 
 import json
 import logging
+import time
 from typing import Any
 
 import boto3
@@ -35,10 +36,17 @@ def _vector_id(session_id: str, idx: int) -> str:
     return f"{session_id}:{idx}"
 
 
-def ingest_exchanges(team_id: str, agent_id: str, exchanges: list[dict[str, Any]]) -> dict[str, Any]:
-    """Core logic (no Lambda/event shapes). `exchanges` is a list of
-    ExchangeWire-shaped dicts. Returns a PushMessagesResponse-shaped dict:
-    {"accepted": int, "ids": [...]}.
+def ingest_exchanges(identity: dict[str, Any], exchanges: list[dict[str, Any]]) -> dict[str, Any]:
+    """Core logic (no Lambda/event shapes). The only writer of exchange
+    documents: takes the caller's whole identity (team_id, agent_id,
+    display_name -- as set by app.py's AuthMiddleware) plus the validated,
+    still-bare exchanges from the request body, stamps each with that
+    identity, and writes the resulting document to S3 and S3 Vectors. app.py
+    must not build its own copy of this document -- two writers of the same
+    S3 key meant whichever ran last won, silently dropping fields like
+    display_name depending on write order.
+
+    Returns a PushMessagesResponse-shaped dict: {"accepted": int, "ids": [...]}.
 
     An exchange only counts as accepted once it's fully searchable (S3 write
     AND embed+vector write both succeeded) -- NOT merely once it's in S3.
@@ -57,6 +65,11 @@ def ingest_exchanges(team_id: str, agent_id: str, exchanges: list[dict[str, Any]
         harmless, same key), and the vector write is retried under the same
         idempotent vector_id next time the client resends this batch.
     """
+    team_id = identity["team_id"]
+    agent_id = identity["agent_id"]
+    display_name = identity["display_name"]
+    received_at = int(time.time())
+
     accepted_ids: list[str] = []
 
     for exchange in exchanges[:MAX_EXCHANGES_PER_REQUEST]:
@@ -65,11 +78,26 @@ def ingest_exchanges(team_id: str, agent_id: str, exchanges: list[dict[str, Any]
         vector_id = _vector_id(session_id, idx)
         s3_key = _exchange_key(team_id, agent_id, session_id, idx)
 
+        doc = {
+            "id": vector_id,  # recomputed server-side, not trusted from the body
+            "session_id": session_id,
+            "idx": idx,
+            "ts": exchange["ts"],
+            "user_text": exchange["user_text"],
+            "assistant_text": exchange["assistant_text"],
+            "tool_summaries": exchange.get("tool_summaries", []),
+            "files_touched": exchange.get("files_touched", []),
+            "team_id": team_id,
+            "agent_id": agent_id,
+            "display_name": display_name,
+            "received_at": received_at,
+        }
+
         try:
             _s3.put_object(
                 Bucket=EXCHANGES_BUCKET,
                 Key=s3_key,
-                Body=json.dumps(exchange).encode("utf-8"),
+                Body=json.dumps(doc).encode("utf-8"),
                 ContentType="application/json",
             )
         except Exception:
@@ -78,7 +106,7 @@ def ingest_exchanges(team_id: str, agent_id: str, exchanges: list[dict[str, Any]
 
         try:
             text = build_exchange_embedding_text(
-                exchange["user_text"], exchange["assistant_text"], exchange.get("files_touched", [])
+                doc["user_text"], doc["assistant_text"], doc["files_touched"]
             )
             embedding = embed_text(text)
             put_vector(
@@ -87,12 +115,13 @@ def ingest_exchanges(team_id: str, agent_id: str, exchanges: list[dict[str, Any]
                 metadata={
                     "team_id": team_id,
                     "agent_id": agent_id,
+                    "display_name": display_name,  # shown by search even if the S3 hydration fetch fails
                     "session_id": session_id,
                     "idx": idx,
-                    "ts": exchange["ts"],
+                    "ts": doc["ts"],
                     "s3_key": s3_key,
-                    "files_touched": exchange.get("files_touched", []),
-                    "preview": exchange["assistant_text"][:200],
+                    "files_touched": doc["files_touched"],
+                    "preview": doc["assistant_text"][:200],
                 },
             )
         except (EmbeddingError, VectorStoreError):
@@ -103,6 +132,6 @@ def ingest_exchanges(team_id: str, agent_id: str, exchanges: list[dict[str, Any]
             )
             continue
 
-        accepted_ids.append(exchange.get("id", vector_id))
+        accepted_ids.append(doc["id"])
 
     return {"accepted": len(accepted_ids), "ids": accepted_ids}
