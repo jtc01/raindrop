@@ -43,7 +43,7 @@ def put_vector(vector_id: str, embedding: Sequence[float], metadata: dict[str, A
 def put_vectors_batch(items: Sequence[tuple[str, Sequence[float], dict[str, Any]]]) -> None:
     """Upsert vectors. put_vectors overwrites an existing key in place -- there
     is no separate upsert call, so idempotent re-ingestion falls out of using a
-    deterministic vector_id (api/messages.py uses the exchange's session_id:idx).
+    deterministic vector_id (messages.py uses the exchange's session_id:idx).
     """
     if not items:
         return

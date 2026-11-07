@@ -1,5 +1,5 @@
-"""Shared embedding logic. Both ingestion (api/messages.py) and retrieval
-(api/search.py) must call embed_text() from here rather than invoking Bedrock
+"""Shared embedding logic. Both ingestion (messages.py) and retrieval
+(search.py) must call embed_text() from here rather than invoking Bedrock
 directly, so document and query embeddings always live in the same vector
 space.
 """

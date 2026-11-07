@@ -1,5 +1,5 @@
-"""Ingestion: POST /messages (push_messages). Writes each exchange to S3 and
-indexes it in S3 Vectors so api/search.py can find it later.
+"""Ingestion: writes each exchange to S3 and indexes it in S3 Vectors so
+search.py can find it later. Called from app.py's POST /messages route.
 """
 
 import json
@@ -94,21 +94,3 @@ def ingest_exchanges(team_id: str, agent_id: str, exchanges: list[dict[str, Any]
             )
 
     return {"accepted": len(accepted_ids), "ids": accepted_ids}
-
-
-def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    """API Gateway shim. team_id/agent_id are expected to already be attached
-    by an upstream authorizer (event["requestContext"]["authorizer"]) -- this
-    Lambda trusts them as pre-validated, per the task's auth boundary (the
-    local proxy redacts secrets and authenticates before API Gateway is ever
-    called).
-    """
-    authorizer = event.get("requestContext", {}).get("authorizer", {})
-    team_id = authorizer["team_id"]
-    agent_id = authorizer["agent_id"]
-
-    body = json.loads(event.get("body") or "{}")
-    exchanges = body.get("exchanges", [])
-
-    result = ingest_exchanges(team_id, agent_id, exchanges)
-    return {"statusCode": 200, "body": json.dumps(result)}

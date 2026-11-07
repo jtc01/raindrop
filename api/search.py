@@ -1,7 +1,6 @@
-"""Retrieval: POST /search. Embeds the query, finds nearest exchanges scoped
-to the caller's team, reranks by similarity + recency, and hydrates full text
-for the final result set. This is what api/mcp.py exposes as the MCP tool an
-agent calls to see what its teammates' agents have been doing.
+"""Retrieval: embeds the query, finds nearest exchanges scoped to the
+caller's team, reranks by similarity + recency, and hydrates full text for
+the final result set. Called from app.py's search_team_context MCP tool.
 """
 
 import json
@@ -97,19 +96,3 @@ def search(team_id: str, query_text: str, top_k: int = SEARCH_TOP_K_DEFAULT) -> 
 
     # Hydration completes out of order (concurrent futures); reassemble in rerank order.
     return [hydrated_by_vector_id[m.vector_id] for m in top if m.vector_id in hydrated_by_vector_id]
-
-
-def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
-    """API Gateway shim. team_id is pre-authenticated (attached by the
-    upstream authorizer); query/top_k come from the request body. The
-    response is relayed by api/mcp.py as the MCP tool's result.
-    """
-    authorizer = event.get("requestContext", {}).get("authorizer", {})
-    team_id = authorizer["team_id"]
-
-    body = json.loads(event.get("body") or "{}")
-    query_text = body["query"]
-    top_k = int(body.get("top_k", SEARCH_TOP_K_DEFAULT))
-
-    results = search(team_id, query_text, top_k)
-    return {"statusCode": 200, "body": json.dumps({"results": results})}
