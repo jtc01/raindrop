@@ -69,5 +69,7 @@ HOOK_MARKER = "raindrop sync"
 RULES_START = "<!-- raindrop:start -->"
 RULES_END = "<!-- raindrop:end -->"
 
-# Max exchanges per push_messages request.
-BATCH_SIZE = 50
+# Max exchanges per push_messages request. The server embeds each exchange
+# (~1s) before responding and API Gateway cuts requests off at 30s, so keep
+# this well under 30 or a large batch times out and is retried forever.
+BATCH_SIZE = 10
