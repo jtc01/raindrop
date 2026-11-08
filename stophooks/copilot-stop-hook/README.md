@@ -55,14 +55,22 @@ request). `raindrop tools remove copilot` removes the CLI's hook file.
 
 ## What was verified, and what wasn't
 
-- The transcript parser was checked against real VS Code Copilot Chat transcripts
-  (event types, prompt, reply and tool events, and finding a transcript by session ID).
-- The hook file format and the `agentStop` payload fields come from the Copilot hooks
-  documentation. The hook has not been run inside Copilot yet. The docs do not say
-  whether `agentStop` fires for chat-panel sessions in VS Code, so confirm that with
-  the capture script below before relying on it.
-- The Copilot CLI may write transcripts in a different format from VS Code. If a hook
-  points at one the parser does not recognise, it finds no prompts and syncs nothing.
+- The transcript parser was checked against real VS Code Copilot Chat transcripts (event types,
+  prompt, reply and tool events, and finding a transcript by session ID).
+- **Copilot loaded the hook.** A hook file in `~/.copilot/hooks/` shows up under **Hooks** in Copilot's
+  Agent Customizations screen in VS Code, so the folder and file format are right.
+- **Copilot's own engine keeps sessions in `~/.copilot/session-state/<sessionId>/events.jsonl`**, in the
+  same event style (`user.message`, `assistant.message`, `tool.execution_start`, ...) plus `hook.start`
+  and `hook.end` events recording every hook it ran and the payload it sent. The parser reads this too
+  and ignores the hook and system events. A real session that failed before any reply correctly
+  produces nothing to upload.
+- **Not yet seen: `agentStop` firing on a finished turn.** `agentStop` only fires when a turn completes,
+  and the test account has no usable model (Copilot says "No model available. Check policy enablement
+  under GitHub Settings > Copilot"), so no turn has finished. After a successful turn, the `hook.start`
+  event for `agentStop` in that session's `events.jsonl` shows the exact payload Copilot sends, even
+  without the capture script.
+- The hook file format and the `agentStop` payload fields otherwise come from the Copilot hooks
+  documentation.
 
 ## Checking what Copilot actually sends
 
