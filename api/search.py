@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, Sequence
 
 import boto3
 from botocore.config import Config
@@ -18,6 +18,7 @@ from config import (
     MAX_RETRY_ATTEMPTS,
     RECENCY_HALF_LIFE_HOURS,
     RERANK_SIMILARITY_WEIGHT,
+    SEARCH_FILE_FILTER_FETCH,
     SEARCH_OVERFETCH_MULTIPLIER,
     SEARCH_TOP_K_DEFAULT,
 )
@@ -48,6 +49,7 @@ def _hydrate(match: VectorMatch) -> dict[str, Any]:
     fetch fails, instead of dropping the result entirely.
     """
     base = {
+        "id": match.vector_id,  # the exchange id (session_id:idx), so a reader can refer back to it
         "agent_id": match.metadata.get("agent_id"),
         "display_name": match.metadata.get("display_name"),
         "session_id": match.metadata.get("session_id"),
@@ -80,14 +82,37 @@ def _hydrate(match: VectorMatch) -> dict[str, Any]:
     }
 
 
-def search(team_id: str, query_text: str, top_k: int = SEARCH_TOP_K_DEFAULT) -> list[dict[str, Any]]:
+def _mentions_file(files: Any, needle: str) -> bool:
+    """True if any touched path contains `needle` (case-insensitive; / and \\ are the same)."""
+    want = needle.replace("\\", "/").lower()
+    return any(want in str(f).replace("\\", "/").lower() for f in (files or []))
+
+
+def search(
+    team_id: str,
+    query_text: str,
+    top_k: int = SEARCH_TOP_K_DEFAULT,
+    *,
+    agent_ids: Sequence[str] | None = None,
+    since_ts: int | None = None,
+    file_contains: str | None = None,
+) -> list[dict[str, Any]]:
     """Embed the query, over-fetch nearest vectors scoped to team_id, rerank by
     similarity + recency, keep only the final top_k, then hydrate full text
     for just those from S3 (concurrently -- S3 GetObject latency dominates
     wall time, so parallelizing a handful of small fetches matters).
+
+    Optional narrowing, all inside the team: `agent_ids` (only these agents) and `since_ts`
+    (epoch seconds) are applied by the vector index itself. `file_contains` is applied here to
+    the best matches instead, because files_touched is stored as non-filterable metadata
+    (it can be long); so it is matched against the SEARCH_FILE_FILTER_FETCH nearest vectors
+    and may return fewer than top_k.
     """
     embedding = embed_text(query_text)
-    candidates = query_vectors(embedding, team_id, top_k * SEARCH_OVERFETCH_MULTIPLIER)
+    fetch = SEARCH_FILE_FILTER_FETCH if file_contains else top_k * SEARCH_OVERFETCH_MULTIPLIER
+    candidates = query_vectors(embedding, team_id, fetch, agent_ids=agent_ids, since_ts=since_ts)
+    if file_contains:
+        candidates = [c for c in candidates if _mentions_file(c.metadata.get("files_touched"), file_contains)]
     if not candidates:
         return []
 

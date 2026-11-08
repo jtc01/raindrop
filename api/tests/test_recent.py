@@ -84,3 +84,16 @@ def test_unreadable_object_is_dropped_not_fatal():
     real = s3.get_object
     s3.get_object = lambda Bucket, Key: (_ for _ in ()).throw(OSError("boom")) if Key == bad_key else real(Bucket, Key)
     assert [r["ts"] for r in recent.recent_activity("t1", 5, s3=s3)] == [1]
+
+
+def test_each_result_carries_the_exchange_id():
+    s3 = FakeS3()
+    s3.put("t1", "ann", "sess-a", 0, ts=100, minutes=1)
+    s3.put("t1", "ann", "sess-a", 7, ts=200, minutes=2)
+    got = recent.recent_activity("t1", 5, s3=s3)
+    assert [r["id"] for r in got] == ["sess-a:7", "sess-a:0"]  # rebuilt as session_id:idx for older documents
+
+    key = "teams/t1/agents/ann/sessions/sess-b/3.json"       # a document that stores its own id keeps it
+    s3.objects[key] = (T0 + timedelta(minutes=9), {"id": "sess-b:3", "session_id": "sess-b", "idx": 3, "ts": 300,
+                                                   "user_text": "q", "assistant_text": "a", "files_touched": []})
+    assert recent.recent_activity("t1", 1, s3=s3)[0]["id"] == "sess-b:3"

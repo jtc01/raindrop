@@ -74,7 +74,10 @@ def _hydrate(s3, key: str) -> Optional[dict[str, Any]]:
         return None
     # teams/{team}/agents/{agent}/sessions/{session}/{idx}.json
     parts = key.split("/")
+    session_id, idx = exchange.get("session_id"), exchange.get("idx")
     return {
+        # The exchange id (session_id:idx), as stored at ingest; rebuilt for older documents.
+        "id": exchange.get("id") or (f"{session_id}:{idx}" if session_id is not None and idx is not None else None),
         "agent_id": parts[3] if len(parts) > 3 else None,
         "session_id": exchange.get("session_id"),
         "idx": exchange.get("idx"),

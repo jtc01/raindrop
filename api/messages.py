@@ -6,12 +6,13 @@ import json
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import boto3
 from botocore.config import Config
 
-from config import AWS_REGION, EXCHANGES_BUCKET, MAX_RETRY_ATTEMPTS
+from config import AWS_REGION, EMBED_MAX_WORKERS, EXCHANGES_BUCKET, MAX_RETRY_ATTEMPTS
 from embed import EmbeddingError, EmptyTextError, build_exchange_embedding_text, embed_text
 from vector_store import VectorStoreError, VectorStoreValidationError, put_vector
 
@@ -149,9 +150,10 @@ def ingest_exchanges(identity: dict[str, Any], exchanges: list[dict[str, Any]]) 
     display_name = identity["display_name"]
     received_at = int(time.time())
 
-    accepted_ids: list[str] = []
-
-    for exchange in exchanges[:MAX_EXCHANGES_PER_REQUEST]:
+    def process(exchange: dict[str, Any]) -> str | None:
+        """Store and index one exchange. Returns its id if it counts as accepted, else None.
+        Runs on a worker thread; it touches only its own exchange (the boto3 clients are
+        thread-safe), so the accept/retry rules below are exactly the sequential ones."""
         exchange = scrub_exchange_paths(exchange)
         session_id = exchange["session_id"]
         idx = exchange["idx"]
@@ -182,7 +184,7 @@ def ingest_exchanges(identity: dict[str, Any], exchanges: list[dict[str, Any]]) 
             )
         except Exception:
             logger.exception("ingest_exchanges: S3 write failed for %s, skipping", vector_id)
-            continue
+            return None
 
         try:
             text = build_exchange_embedding_text(
@@ -209,8 +211,20 @@ def ingest_exchanges(identity: dict[str, Any], exchanges: list[dict[str, Any]]) 
                 "(exchange stored in S3 but NOT counted as accepted, so the client retries it)",
                 vector_id,
             )
-            continue
+            return None
 
-        accepted_ids.append(doc["id"])
+        return doc["id"]
 
+    batch = exchanges[:MAX_EXCHANGES_PER_REQUEST]
+    if len(batch) <= 1 or EMBED_MAX_WORKERS <= 1:
+        results = [process(exchange) for exchange in batch]
+    else:
+        # Each exchange spends nearly all its time waiting on S3 and Bedrock, so running a few
+        # at once cuts a batch from the sum of the waits to about the longest few. map() keeps
+        # the results in request order, and re-raises a worker's unexpected exception just as
+        # the sequential loop did.
+        with ThreadPoolExecutor(max_workers=min(len(batch), EMBED_MAX_WORKERS)) as pool:
+            results = list(pool.map(process, batch))
+
+    accepted_ids = [r for r in results if r is not None]
     return {"accepted": len(accepted_ids), "ids": accepted_ids}

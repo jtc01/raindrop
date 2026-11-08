@@ -211,6 +211,12 @@ def _fence_untrusted(lines: list[str]) -> str:
     ])
 
 
+def _safe_id(value) -> str:
+    """An exchange id for display: only characters an id can contain, so stored text can
+    never use it to inject a line or a fence into the block."""
+    return re.sub(r"[^A-Za-z0-9._:\-]", "_", str(value))[:160]
+
+
 def _fmt_when(ts) -> str:
     if not ts:
         return "unknown time"
@@ -229,9 +235,10 @@ def _format_exchanges(results: list[dict], empty_message: str) -> str:
         when = _fmt_when(r.get("ts"))
         files = r.get("files_touched") or []
         files_suffix = f" [files: {', '.join(files)}]" if files else ""
+        id_suffix = f" [id: {_safe_id(r.get('id'))}]" if r.get("id") else ""
         asked = _snippet(r.get("user_text"))
         did = _snippet(r.get("assistant_text") or r.get("preview"))
-        line = _one_line(f'- {who} ({when}): "{asked}" → "{did}"{files_suffix}')
+        line = _one_line(f'- {who} ({when}): "{asked}" → "{did}"{files_suffix}{id_suffix}')
         if lines and total + len(line) + 1 > CONTEXT_BLOCK_MAX_CHARS:
             break
         lines.append(line)
@@ -239,17 +246,69 @@ def _format_exchanges(results: list[dict], empty_message: str) -> str:
     return _fence_untrusted(lines) if lines else empty_message
 
 
+SEARCH_SINCE_HOURS_MAX = 24 * 365  # a year; anything larger is the same as no limit
+
+
+def _resolve_teammates(team_id: str, you: str, teammate: str) -> list[str] | str:
+    """agent ids for a teammate given by display name or agent id ("me" is the caller), or an
+    error message naming the real teammates when nothing matches."""
+    wanted = teammate.strip().lower()
+    if wanted in ("me", "self", "myself"):
+        return [you]
+    members = list_team_members(team_id)
+    ids = [m["agent_id"] for m in members
+           if wanted in ((m.get("display_name") or "").strip().lower(), str(m["agent_id"]).lower())]
+    if ids:
+        return ids
+    names = ", ".join(sorted({m.get("display_name") or m["agent_id"] for m in members})) or "none"
+    return f"No teammate named '{teammate.strip()}'. Teammates on this team: {names}."
+
+
 @mcp.tool
-def search_team_context(query: str, top_k: int = 8) -> str:
+def search_team_context(
+    query: str,
+    top_k: int = 8,
+    teammate: str | None = None,
+    file: str | None = None,
+    since_hours: float | None = None,
+) -> str:
     """Semantic search over what your teammates' agents have been working on.
     Returns the most relevant recent exchanges (who, when, prompt, reply, files
-    touched) from everyone on your team, including you, as compact labeled text.
-    Use it before starting work that may overlap with a teammate's, or to find
-    out who touched a file or feature."""
+    touched, and an id you can quote) from everyone on your team, including you,
+    as compact labeled text. Use it before starting work that may overlap with a
+    teammate's, or to find out who touched a file or feature.
+
+    Optional filters, all combinable: `teammate` (a display name or agent id, or "me")
+    keeps one person's exchanges; `file` (part of a path, for example "login.py" or
+    "src/auth/") keeps exchanges that touched a matching file, chosen from the closest
+    100 matches, so it may return fewer than top_k; `since_hours` keeps only the last
+    N hours."""
     ident = current_identity()
     top_k = max(1, min(int(top_k), SEARCH_TOP_K_MAX))
-    results = search.search(ident["team_id"], query, top_k)
-    return _format_exchanges(results, "No relevant context found.")
+
+    agent_ids = None
+    if teammate and teammate.strip():
+        resolved = _resolve_teammates(ident["team_id"], ident["agent_id"], teammate)
+        if isinstance(resolved, str):
+            return resolved  # no such teammate: say who exists, do not silently search everyone
+        agent_ids = resolved
+
+    since_ts = None
+    if since_hours is not None:
+        hours = float(since_hours)
+        if not hours > 0:
+            return "since_hours must be greater than 0."
+        since_ts = int(time.time() - min(hours, SEARCH_SINCE_HOURS_MAX) * 3600)
+
+    file_contains = file.strip() if file and file.strip() else None
+    results = search.search(
+        ident["team_id"], query, top_k,
+        agent_ids=agent_ids, since_ts=since_ts, file_contains=file_contains,
+    )
+    filtered = bool(agent_ids or since_ts is not None or file_contains)
+    return _format_exchanges(
+        results, "No matching context found for those filters." if filtered else "No relevant context found."
+    )
 
 
 RECENT_N_MAX = 25

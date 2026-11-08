@@ -182,3 +182,98 @@ def test_fetch_vectors_returns_data_and_metadata():
         out = vector_store.fetch_vectors(["k1", "k2"])
     assert out == {"k1": ([0.1, 0.2], {"preview": "p"})}
     assert gv.call_args.kwargs["returnData"] is True and gv.call_args.kwargs["returnMetadata"] is True
+
+
+# ---- embedding runs concurrently --------------------------------------------------------
+
+import threading
+import time as _time
+
+
+def _batch(n):
+    return [_exchange(idx=i, user_text=f"question {i}") for i in range(n)]
+
+
+def test_embeds_overlap_instead_of_running_one_after_another(s3_ok):
+    # Two embeds can only get past this barrier if both are running at the same moment.
+    # A sequential loop would wait here until the timeout and the test would fail.
+    barrier = threading.Barrier(2, timeout=5)
+
+    def embed(text):
+        barrier.wait()
+        return [0.1]
+
+    with mock.patch.object(messages, "embed_text", side_effect=embed), mock.patch.object(messages, "put_vector"):
+        result = messages.ingest_exchanges(IDENT, _batch(2))
+    assert result["accepted"] == 2
+
+
+def test_concurrency_never_exceeds_the_worker_limit(s3_ok, monkeypatch):
+    monkeypatch.setattr(messages, "EMBED_MAX_WORKERS", 3)
+    lock, running, peak = threading.Lock(), [0], [0]
+
+    def embed(text):
+        with lock:
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+        _time.sleep(0.05)
+        with lock:
+            running[0] -= 1
+        return [0.1]
+
+    with mock.patch.object(messages, "embed_text", side_effect=embed), mock.patch.object(messages, "put_vector"):
+        result = messages.ingest_exchanges(IDENT, _batch(12))
+    assert result["accepted"] == 12 and 2 <= peak[0] <= 3
+
+
+def test_one_worker_means_strictly_sequential(s3_ok, monkeypatch):
+    monkeypatch.setattr(messages, "EMBED_MAX_WORKERS", 1)
+    lock, running, peak = threading.Lock(), [0], [0]
+
+    def embed(text):
+        with lock:
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+        _time.sleep(0.01)
+        with lock:
+            running[0] -= 1
+        return [0.1]
+
+    with mock.patch.object(messages, "embed_text", side_effect=embed), mock.patch.object(messages, "put_vector"):
+        messages.ingest_exchanges(IDENT, _batch(5))
+    assert peak[0] == 1
+
+
+def test_ids_come_back_in_request_order_even_when_later_ones_finish_first(s3_ok):
+    def embed(text):  # the first exchanges are the slowest
+        n = int(text.split("question ")[1].split()[0])
+        _time.sleep(0.06 - 0.01 * n)
+        return [0.1]
+
+    with mock.patch.object(messages, "embed_text", side_effect=embed), mock.patch.object(messages, "put_vector"):
+        result = messages.ingest_exchanges(IDENT, _batch(5))
+    assert result["ids"] == [f"sess:{i}" for i in range(5)]
+
+
+def test_one_failed_exchange_does_not_disturb_the_others(s3_ok):
+    def embed(text):
+        if "question 2" in text:
+            raise EmbeddingError("bad response for exchange 2")
+        return [0.1]
+
+    with mock.patch.object(messages, "embed_text", side_effect=embed), mock.patch.object(messages, "put_vector"):
+        result = messages.ingest_exchanges(IDENT, _batch(5))
+    assert result == {"accepted": 4, "ids": ["sess:0", "sess:1", "sess:3", "sess:4"]}  # 2 is retried by the client
+
+
+def test_an_unexpected_error_still_propagates_like_before(s3_ok):
+    with mock.patch.object(messages, "embed_text", side_effect=RuntimeError("boom")), \
+         mock.patch.object(messages, "put_vector"):
+        with pytest.raises(RuntimeError, match="boom"):
+            messages.ingest_exchanges(IDENT, _batch(4))
+
+
+def test_only_the_first_fifty_exchanges_of_a_request_are_processed(s3_ok):
+    with mock.patch.object(messages, "embed_text", return_value=[0.1]), mock.patch.object(messages, "put_vector"):
+        result = messages.ingest_exchanges(IDENT, _batch(60))
+    assert result["accepted"] == messages.MAX_EXCHANGES_PER_REQUEST == 50
