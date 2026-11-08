@@ -34,9 +34,9 @@ import typer
 
 from raindrop import api_client
 from raindrop import config
-from raindrop.redact import load_env_secrets, redact_obj
+from raindrop.redact import LocalIdentifiers, load_env_secrets, redact_obj, scrub_obj
 from raindrop.adapters.base import Adapter, SessionRef
-from raindrop.adapters.registry import get_adapter
+from raindrop.adapters.registry import all_names, get_adapter
 from raindrop.constants import BATCH_SIZE
 from raindrop.errors import NotJoinedError, RaindropError
 
@@ -107,6 +107,23 @@ def _known_secrets(cfg: dict, session: SessionRef) -> list[str]:
     return secrets
 
 
+def _local_identifiers(session: SessionRef) -> LocalIdentifiers:
+    """This machine's paths, username and hostname, which must not reach
+    teammates. The repo root makes in-repo paths repo-relative."""
+    repo = config.repo_root(session.cwd) if session.cwd else None
+    return LocalIdentifiers.detect(repo_root=repo)
+
+
+def _redact_wire(raw: dict, secrets: list[str], local: LocalIdentifiers) -> tuple[dict, dict, list]:
+    """The one redaction path for both real and dry-run syncs. Local
+    identifiers go first (paths -> repo-relative or ~/..., username -> <user>,
+    hostname -> <host>), then secrets. Returns (scrubbed, wire, rewrites):
+    `wire` is what gets POSTed; `scrubbed` is the text secrets were removed
+    from, which the dry run aligns against `wire` to locate each marker."""
+    scrubbed, rewrites = scrub_obj(raw, local)
+    return scrubbed, redact_obj(scrubbed, known_secrets=secrets), rewrites
+
+
 def run_sync(payload: dict, tool: str, transport: httpx.BaseTransport | None = None) -> int:
     """Sync one hook event. Returns the number of exchanges pushed."""
     cfg = config.load()
@@ -130,7 +147,8 @@ def run_sync(payload: dict, tool: str, transport: httpx.BaseTransport | None = N
         return 0
 
     secrets = _known_secrets(cfg, session)
-    wire_all = [redact_obj(e.to_wire(), known_secrets=secrets) for e in result.exchanges]
+    local = _local_identifiers(session)
+    wire_all = [_redact_wire(e.to_wire(), secrets, local)[1] for e in result.exchanges]
 
     failures, skipped = _load_state(cursor_file)
 
@@ -186,10 +204,14 @@ _MAX_ALIGNED_MARKERS = 200
 @dataclass
 class Redaction:
     field: str  # e.g. "user_text", "tool_summaries[2]"
-    marker: str  # what replaced it, e.g. "[REDACTED:openai-key]"
+    marker: str  # what replaced it, e.g. "[REDACTED:openai-key]" or "api/app.py"
     start: int | None  # char offsets into the original string; None if unknown
     end: int | None
     original: str | None
+    # "secret": shown as a short hint only. "local": a path/username/hostname of
+    # this machine, shown in full (it is being displayed to its owner).
+    kind: str = "secret"
+    count: int = 1  # identical local rewrites in one field are reported once
 
 
 @dataclass
@@ -246,6 +268,19 @@ def _diff_redactions(before: object, after: object, path: str = "") -> list[Reda
     return []
 
 
+def _local_redactions(rewrites: list) -> list[Redaction]:
+    """Rewrite records from scrub_obj as Redactions, one per distinct
+    (field, original, replacement) with a count."""
+    merged: dict[tuple[str, str, str], Redaction] = {}
+    for rw in rewrites:
+        key = (rw.field, rw.original, rw.replacement)
+        if key in merged:
+            merged[key].count += 1
+        else:
+            merged[key] = Redaction(rw.field, rw.replacement, None, None, rw.original, kind="local")
+    return list(merged.values())
+
+
 def _skip_reason(cwd: str | None, cfg: dict) -> str:
     sharing = cfg.get("sharing", {})
     if sharing.get("paused"):
@@ -253,6 +288,31 @@ def _skip_reason(cwd: str | None, cfg: dict) -> str:
     if config.sharing_paused(cwd, cfg):
         return "sharing is paused for this repo (`raindrop resume --repo` to resume)"
     return "sharing is opt-in and this repo hasn't been shared (`raindrop share --repo` to share it)"
+
+
+def detect_dry_run_tool(cwd: str | Path | None = None) -> str:
+    """The one tool with a session in this repo, for `--dry-run` without `--tool`.
+
+    Errors if none or several match, so the preview never silently shows the
+    wrong tool's session."""
+    if not config.load():
+        raise NotJoinedError()
+    repo = config.repo_root(cwd)
+    found: list[str] = []
+    for name in all_names():
+        try:
+            if get_adapter(name).latest_session(repo) is not None:
+                found.append(name)
+        except (ImportError, RaindropError):
+            continue  # adapter missing/broken, or one that can't look sessions up yet
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        raise RaindropError(f"No session from any supported tool found for {repo}.")
+    raise RaindropError(
+        f"Sessions from several tools found for {repo}: {', '.join(found)}. "
+        "Pick one with --tool."
+    )
 
 
 def run_dry_run(payload: dict | None, tool: str, cwd: str | Path | None = None) -> DryRunReport:
@@ -282,13 +342,13 @@ def run_dry_run(payload: dict | None, tool: str, cwd: str | Path | None = None) 
     _, skipped = _load_state(cursor_file)
 
     secrets = _known_secrets(cfg, session)
+    local = _local_identifiers(session)
     exchanges = []
     for ex in result.exchanges:
-        raw = ex.to_wire()
-        wire = redact_obj(raw, known_secrets=secrets)
+        scrubbed, wire, rewrites = _redact_wire(ex.to_wire(), secrets, local)
         exchanges.append(DryRunExchange(
             wire=wire,
-            redactions=_diff_redactions(dict(raw), wire),
+            redactions=_local_redactions(rewrites) + _diff_redactions(dict(scrubbed), wire),
             abandoned=wire["id"] in skipped,
         ))
     return DryRunReport(
@@ -352,6 +412,10 @@ def format_dry_run(report: DryRunReport) -> str:
         if e.redactions:
             out.append(f"  Redacted ({len(e.redactions)}):")
             for r in e.redactions:
+                if r.kind == "local":
+                    times = f" (x{r.count})" if r.count > 1 else ""
+                    out.append(f"    - {r.field}: {r.original} -> {r.marker}{times}")
+                    continue
                 where = f" chars {r.start}-{r.end}" if r.start is not None else ""
                 what = f"{_hint(r.original)} -> " if r.original is not None else ""
                 out.append(f"    - {r.field}{where}: {what}{r.marker}")
@@ -395,7 +459,11 @@ def _hook_reply(tool: str) -> None:
 
 
 def sync(
-    tool: str = typer.Option("claude-code", "--tool", help="Which tool's hook is calling."),
+    tool: str | None = typer.Option(
+        None, "--tool",
+        help="Which tool's hook is calling (default claude-code). With --dry-run and no "
+             "hook payload, defaults to the one tool that has a session in this repo.",
+    ),
     fail_open: bool = typer.Option(
         False, "--fail-open",
         help="Always exit 0 and log errors to ~/.raindrop/sync.log. Needed for hooks "
@@ -415,12 +483,16 @@ def sync(
     """
     if dry_run:
         try:
-            report = run_dry_run(_read_optional_payload(), tool)
+            payload = _read_optional_payload()
+            if tool is None:
+                tool = "claude-code" if payload is not None else detect_dry_run_tool()
+            report = run_dry_run(payload, tool)
         except (RaindropError, json.JSONDecodeError, OSError) as e:
             typer.secho(f"raindrop sync --dry-run failed: {e}", fg="red", err=True)
             raise typer.Exit(1)
         typer.echo(format_dry_run(report))
         return
+    tool = tool or "claude-code"
     try:
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):

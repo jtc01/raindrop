@@ -2,6 +2,7 @@
 exchange as accepted (deterministic, client must move on) vs. not accepted
 (transient, client retries). All AWS calls are mocked."""
 
+import json
 import logging
 from unittest import mock
 
@@ -120,3 +121,64 @@ def test_put_vectors_other_client_error_stays_retryable():
         with pytest.raises(vector_store.VectorStoreError) as info:
             vector_store.put_vector("k", [0.1], {})
     assert not isinstance(info.value, vector_store.VectorStoreValidationError)
+
+
+# --- server-side path scrub (defense in depth behind the client's redaction) ---
+
+import pytest as _pytest  # noqa: E402  (keeps the block self-contained when appended)
+
+
+@_pytest.mark.parametrize("text, expected", [
+    ("Edit /Users/matt/Development/raindrop/api/app.py", "Edit ~/Development/raindrop/api/app.py"),
+    ("/home/phil/Development/x.py and /home/phil/.cursor/hooks.json", "~/Development/x.py and ~/.cursor/hooks.json"),
+    (r"C:\Users\Matteo\Documents\GitHub\raindrop\api\app.py", r"~/Documents\GitHub\raindrop\api\app.py"),
+    ("C:/Users/Matteo/Documents/x.py", "~/Documents/x.py"),
+    (r"c:\users\matteo\x.py", "~/x.py"),
+    (r"C:\Users\Matt Moyer\x.py", "~/x.py"),
+    ("cd /c/Users/Matteo/Documents/GitHub/raindrop && git status", "cd ~/Documents/GitHub/raindrop && git status"),
+    ("/USERS/MATT/x", "~/x"),
+    ('"/Users/matt/x" [/home/a/b]', '"~/x" [~/b]'),
+    ("/home/phil/.claude/projects/-home-phil-Development-raindrop/x.txt",
+     "~/.claude/projects/-home-<user>-Development-raindrop/x.txt"),
+    (r"C:\Users\Matteo\.claude\projects\-Users-Matteo-Documents-x\y", r"~/.claude\projects\-Users-<user>-Documents-x\y"),
+    ("slug-home-made-pie", "slug-home-made-pie"),  # not after a separator
+    ("cd /c/Users/Matteo && ls /Users/matt; /home/phil.", "cd ~ && ls ~; ~."),  # bare home dir
+    ("the slug is `-Users-matt-Development-raindrop-api`", "the slug is `-Users-<user>-Development-raindrop-api`"),
+    # Not home directories: mid-path, relative, already scrubbed, prose.
+    ("/opt/home/x/y ./home/x/y ~/Users/x/y Users/home at home", "/opt/home/x/y ./home/x/y ~/Users/x/y Users/home at home"),
+    ("", ""),
+])
+def test_scrub_home_paths(text, expected):
+    assert messages.scrub_home_paths(text) == expected
+
+
+def test_ingest_scrubs_text_fields_before_writing(s3_ok):
+    ex = _exchange(
+        user_text="fix /Users/matt/Development/raindrop/api/app.py",
+        assistant_text="Edited /home/matt/proj/x.py. " + "y" * 300,
+        tool_summaries=[r"Edit C:\Users\Matteo\proj\x.py", "Bash: pytest"],
+        files_touched=["/home/phil/proj/a.py", "api/app.py"],
+    )
+    with mock.patch.object(messages, "embed_text", return_value=[0.1]) as embed, \
+         mock.patch.object(messages, "put_vector") as put_vector:
+        result = messages.ingest_exchanges(IDENT, [ex])
+    assert result["accepted"] == 1
+    doc = json.loads(s3_ok.call_args.kwargs["Body"])
+    assert doc["user_text"] == "fix ~/Development/raindrop/api/app.py"
+    assert doc["assistant_text"].startswith("Edited ~/proj/x.py. ")
+    assert doc["tool_summaries"] == [r"Edit ~/proj\x.py", "Bash: pytest"]
+    assert doc["files_touched"] == ["~/proj/a.py", "api/app.py"]
+    assert "/Users/" not in json.dumps(doc) and "/home/" not in json.dumps(doc)
+    # The embedding and the vector's preview see the scrubbed text too.
+    assert "/Users/" not in embed.call_args.args[0]
+    assert put_vector.call_args.kwargs["metadata"]["preview"].startswith("Edited ~/proj/x.py.")
+    assert put_vector.call_args.kwargs["metadata"]["files_touched"] == ["~/proj/a.py", "api/app.py"]
+    assert ex["user_text"].startswith("fix /Users")  # request body not mutated
+
+
+def test_fetch_vectors_returns_data_and_metadata():
+    resp = {"vectors": [{"key": "k1", "data": {"float32": [0.1, 0.2]}, "metadata": {"preview": "p"}}]}
+    with mock.patch.object(vector_store._s3vectors, "get_vectors", return_value=resp) as gv:
+        out = vector_store.fetch_vectors(["k1", "k2"])
+    assert out == {"k1": ([0.1, 0.2], {"preview": "p"})}
+    assert gv.call_args.kwargs["returnData"] is True and gv.call_args.kwargs["returnMetadata"] is True

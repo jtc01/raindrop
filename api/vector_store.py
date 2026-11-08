@@ -108,6 +108,28 @@ def existing_vector_keys(keys: Sequence[str]) -> set[str]:
     return found
 
 
+def fetch_vectors(keys: Sequence[str]) -> dict[str, tuple[list[float], dict[str, Any]]]:
+    """key -> (embedding, metadata) for the keys that exist. Lets a caller rewrite a
+    vector's metadata (scripts/scrub_paths.py fixes `preview`) by putting the same
+    embedding back, instead of paying for a new Titan call."""
+    found: dict[str, tuple[list[float], dict[str, Any]]] = {}
+    for start in range(0, len(keys), GET_VECTORS_BATCH_LIMIT):
+        chunk = list(keys[start : start + GET_VECTORS_BATCH_LIMIT])
+        try:
+            response = _s3vectors.get_vectors(
+                vectorBucketName=VECTOR_BUCKET_NAME,
+                indexName=VECTOR_INDEX_NAME,
+                keys=chunk,
+                returnData=True,
+                returnMetadata=True,
+            )
+        except _s3vectors.exceptions.ClientError as exc:
+            raise VectorStoreError(f"get_vectors failed: {exc}") from exc
+        for item in response.get("vectors", []):
+            found[item["key"]] = (list(item.get("data", {}).get("float32", [])), item.get("metadata") or {})
+    return found
+
+
 def query_vectors(query_embedding: Sequence[float], team_id: str, top_k: int) -> list[VectorMatch]:
     """Nearest-neighbor search, always scoped to team_id. No other function in
     this codebase may call s3vectors.query_vectors directly -- that's what
