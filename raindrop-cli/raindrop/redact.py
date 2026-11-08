@@ -71,7 +71,9 @@ _FORMAT_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 _SECRET_NAME = (
     r"[A-Za-z0-9_.\-]*"
     r"(?:api[_\-]?key|apikey|secret|token|passwd|password|pwd|credential|private[_\-]?key|"
-    r"access[_\-]?key|auth|bearer|cookie)"
+    # `auth` only as a word (auth, oauth, auth_key, authorization, authentication), never as the
+    # start of another word: "Co-Authored-By" and "author" are not secret names.
+    r"access[_\-]?key|auth(?:orization|entication|[_\-]?(?:key|code|header))?(?![a-z])|bearer|cookie)"
     r"[A-Za-z0-9_.\-]*"
 )
 
@@ -150,7 +152,8 @@ def _format_sub(label: str):
 
 
 # --- Layer 4: high-entropy fallback -----------------------------------------------------------
-_ENTROPY_CANDIDATE = re.compile(r"(?<![A-Za-z0-9_\-+=/.])[A-Za-z0-9_\-+=]{32,}(?![A-Za-z0-9_\-+=/.])")
+# A token touching a path separator (/ or \) is a path segment such as a folder name, not a secret.
+_ENTROPY_CANDIDATE = re.compile(r"(?<![A-Za-z0-9_\-+=/.\\])[A-Za-z0-9_\-+=]{32,}(?![A-Za-z0-9_\-+=/.\\])")
 ENTROPY_THRESHOLD = 4.2  # bits/char; random base64 is ~5.5+, English/identifiers ~3-3.8
 
 

@@ -173,5 +173,47 @@ class EntropyAndEnvTests(unittest.TestCase):
         self.assertEqual(load_env_secrets("does/not/exist"), [])
 
 
+class ToolSummaryFalsePositiveTests(unittest.TestCase):
+    """Found by scanning real transcripts: harmless text in tool summaries was being redacted."""
+
+    BS = chr(92)  # a backslash, without escaping trouble
+
+    def test_auth_inside_another_word_is_not_a_secret_name(self):
+        for text in [
+            "git commit -m x && TRAILER='Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>'",
+            "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>",
+            "author = someone_long_name_here",
+            "authored_by: Someone Long Name",
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(redact(text), text)
+
+    def test_auth_as_a_word_is_still_a_secret_name(self):
+        for text, secret in [
+            ("Authorization: Bearer abcdef1234567890xyz", "abcdef1234567890xyz"),
+            ("authorization = Basic dXNlcjpwYXNzd29yZDEyMzQ=", "dXNlcjpwYXNzd29yZDEyMzQ"),
+            ("auth_key = s3cr3tvalue99", "s3cr3tvalue99"),
+            ("authKey: 'hunter2hunter2'", "hunter2hunter2"),
+            ("OAUTH=Zm9vYmFyYmF6cXV4MTIzNDU2", "Zm9vYmFyYmF6cXV4MTIzNDU2"),
+            ("x-auth-token: tok_live_abcdefgh12345678", "tok_live_abcdefgh12345678"),
+        ]:
+            with self.subTest(text=text):
+                self.assertNotIn(secret, redact(text))
+
+    def test_a_long_folder_name_in_a_path_is_not_a_high_entropy_secret(self):
+        folder = "D--Documents-iMazing-Backups-00008150-001C34AA1100401C"
+        bs = self.BS
+        for text in [
+            "Read C:" + bs + "Users" + bs + "me" + bs + "claude" + bs + folder + bs + "x.output",   # Windows
+            "Read C:/Users/me/claude/" + folder + "/x.output",                                       # forward slashes
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(redact(text), text)
+
+    def test_a_pasted_random_blob_is_still_caught_even_next_to_a_path(self):
+        blob = "q8Zk3Lp0Xv7TnR2bYw9Fa4HcJd6MsEu1"
+        self.assertNotIn(blob, redact("see " + blob + " pasted"))
+
+
 if __name__ == "__main__":
     unittest.main()
