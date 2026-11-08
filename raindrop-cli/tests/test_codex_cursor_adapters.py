@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from raindrop.adapters.base import SessionRef
-from raindrop.adapters.codex import CodexAdapter
+from raindrop.adapters.codex import CodexAdapter, hook_command as codex_hook_command
 from raindrop.adapters.cursor import CursorAdapter
 
 
@@ -93,7 +93,7 @@ class CodexAdapterTests(unittest.TestCase):
             for handler in group["hooks"]
         ]
         self.assertIn("echo keep", commands)
-        self.assertEqual(commands.count("raindrop sync --tool codex"), 1)
+        self.assertEqual(commands.count(codex_hook_command()), 1)
 
     def test_holds_unanswered_turn_at_prompt_offset(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -132,6 +132,11 @@ class CursorAdapterTests(unittest.TestCase):
                     "hook_event_name": "afterAgentResponse",
                     "text": "Here is the answer.",
                 })
+                adapter.capture({
+                    "conversation_id": "conversation-1",
+                    "cwd": temp,
+                    "hook_event_name": "stop",
+                })
                 complete = adapter.read_new(
                     SessionRef("conversation-1", None, temp),
                     pending.new_cursor,
@@ -165,6 +170,7 @@ class CursorAdapterTests(unittest.TestCase):
                     "hook_event_name": "afterAgentResponse",
                     "text": "Parser fixed.",
                 })
+                adapter.capture({**payload_base, "hook_event_name": "stop"})
                 size = spool.stat().st_size
                 result = adapter.read_new(SessionRef("conversation-1", None, temp), 0)
 
@@ -175,6 +181,27 @@ class CursorAdapterTests(unittest.TestCase):
         self.assertEqual(exchange.tool_summaries, ["edit_file"])
         self.assertEqual(exchange.files_touched, ["src/parser.py"])
         self.assertEqual(result.new_cursor, size)
+
+    def test_final_reply_wins_when_cursor_replies_before_tool_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            spool = Path(temp) / "cursor.jsonl"
+            adapter = CursorAdapter()
+            base = {"conversation_id": "conversation-1", "cwd": temp}
+            session = SessionRef("conversation-1", None, temp)
+            with patch("raindrop.adapters.cursor._spool_path", return_value=spool):
+                adapter.capture({**base, "hook_event_name": "beforeSubmitPrompt", "prompt": "Fix it"})
+                adapter.capture({**base, "hook_event_name": "afterAgentResponse", "text": "Let me look."})
+                mid = adapter.read_new(session, 0)
+                adapter.capture({**base, "hook_event_name": "postToolUse", "tool_name": "edit_file",
+                                 "tool_input": {"file_path": "a.py"}})
+                adapter.capture({**base, "hook_event_name": "afterAgentResponse", "text": "Fixed."})
+                adapter.capture({**base, "hook_event_name": "stop"})
+                done = adapter.read_new(session, mid.new_cursor)
+
+        self.assertEqual(mid.exchanges, [])
+        self.assertEqual(len(done.exchanges), 1)
+        self.assertEqual(done.exchanges[0].assistant_text, "Fixed.")
+        self.assertEqual(done.exchanges[0].tool_summaries, ["edit_file"])
 
     def test_cursor_hook_install_merges_events_and_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

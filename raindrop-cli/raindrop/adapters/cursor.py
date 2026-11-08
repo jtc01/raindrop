@@ -28,6 +28,7 @@ from raindrop.adapters._common import (
     jsonl_head,
     load_json_text,
     newest_session_in_repo,
+    quote_cmd,
     repo_relative_files,
     validate_session_id,
 )
@@ -36,7 +37,11 @@ from raindrop.errors import TranscriptError
 from raindrop.models import Cursor, Exchange, ReadResult, ToolRecord
 from raindrop import config
 
-HOOK_MARKER = "raindrop sync --tool cursor"
+HOOK_MARKER = "sync --tool cursor"  # matches old bare and new full-path commands
+
+
+def hook_command() -> str:
+    return f"{quote_cmd(exe())} {HOOK_MARKER} --fail-open"
 CAPTURE_EVENTS = ("beforeSubmitPrompt", "postToolUse", "afterAgentResponse", "stop")
 
 
@@ -88,7 +93,7 @@ def _hook_transform(data: dict, install: bool) -> dict:
             )
         ]
         if install:
-            handlers.append({"command": HOOK_MARKER, "timeout": 60})
+            handlers.append({"command": hook_command(), "timeout": 60})
         if handlers:
             hooks[event] = handlers
         else:
@@ -283,10 +288,15 @@ class CursorAdapter(Adapter):
                     if file_path not in drafts[-1]["files"]:
                         drafts[-1]["files"].append(file_path)
             elif event == "afterAgentResponse" and drafts:
+                # Cursor may reply before each tool call, so the last reply wins
+                # and the turn only closes on `stop` or when the next prompt starts.
                 drafts[-1]["assistant_text"] = record["text"]
-                drafts[-1]["complete"] = True
             elif event == "stop" and drafts and drafts[-1]["assistant_text"]:
                 drafts[-1]["complete"] = True
+
+        for earlier in drafts[:-1]:
+            if earlier["assistant_text"]:
+                earlier["complete"] = True
 
         exchanges = [
             Exchange(

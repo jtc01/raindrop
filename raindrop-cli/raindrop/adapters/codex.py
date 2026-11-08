@@ -27,6 +27,7 @@ from raindrop.adapters._common import (
     json_change,
     jsonl_head,
     newest_session_in_repo,
+    quote_cmd,
     repo_relative_files,
     validate_session_id,
 )
@@ -34,7 +35,11 @@ from raindrop.adapters.base import Adapter, Change, SessionRef
 from raindrop.errors import TranscriptError
 from raindrop.models import Cursor, Exchange, ReadResult, ToolRecord
 
-HOOK_MARKER = "raindrop sync --tool codex"
+HOOK_MARKER = "sync --tool codex"  # matches old bare and new full-path commands
+
+
+def hook_command() -> str:
+    return f"{quote_cmd(exe())} {HOOK_MARKER} --fail-open"
 _UUID_TAIL = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
@@ -121,7 +126,7 @@ def _hook_transform(data: dict, install: bool) -> dict:
         groups.append({
             "hooks": [{
                 "type": "command",
-                "command": HOOK_MARKER,
+                "command": hook_command(),
                 "timeout": 60,
             }]
         })

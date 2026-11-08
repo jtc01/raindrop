@@ -50,12 +50,9 @@ parsing and the failure path, but not that the app actually calls the hook.
 
 Known gaps:
 
-- **Cursor replies.** The adapter treats a turn as finished when the first `afterAgentResponse` arrives.
-  If Cursor sends a reply before each tool call, the final answer would be missed. It needs a real Cursor
-  session to settle; see `cursor-stop-hook/README.md`.
-- **Codex and Cursor hook commands** are written as bare `raindrop sync --tool ...` (no full path to the
-  program and no `--fail-open`), unlike the other four. They work when `raindrop` is on the PATH the app
-  launches with, and a failed sync exits 1 (Cursor and Codex carry on when a hook fails).
+- **Cursor replies.** The CLI adapter keeps the last `afterAgentResponse` of a turn and uploads it on `stop`
+  (or when the next prompt starts), so replies sent before tool calls don't cut the turn short. Not yet
+  checked against a real Cursor session; if `stop` doesn't fire on an aborted turn, it uploads at the next prompt.
 - `codex-stop-hook/stop_sync.py` keeps its own parser and upload code, unlike the scripts above, which
   all go through `run_sync`. It honours the sharing settings, but any future change to the shared sync
   (a new redaction step, say) has to be repeated there.
