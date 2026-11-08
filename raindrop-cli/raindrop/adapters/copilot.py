@@ -2,8 +2,10 @@
 
 GitHub Copilot via the Copilot CLI's config directory ($COPILOT_HOME, default
 ~/.copilot). VS Code's docs describe the same `mcp-config.json` as the
-"Copilot Global" destination; its own `mcp.json` (a different `servers` schema
-at a per-OS path) is not written.
+"Copilot Global" destination. VS Code 1.135 did not list our entry from that file
+(even after a full restart) but did list the same command from its own user
+`mcp.json` (a different `servers` schema at a per-OS path), so that file is written
+too, but only for VS Code user dirs that already exist (checked by hand, Nov 2026).
 
   - MCP:   <dir>/mcp-config.json, under `mcpServers`, `type: "local"`
   - Hook:  <dir>/hooks/raindrop.json, an `agentStop` hook that runs
@@ -52,6 +54,7 @@ from raindrop.adapters._common import (
     dump_json,
     edit_file,
     exe,
+    load_json_text,
     quote_cmd,
     summarize_tool,
 )
@@ -197,14 +200,60 @@ class CopilotAdapter(FileConfigAdapter):
             _apply=lambda: apply_file_edit(path, "hook", self._hook_text),
         )
 
+    # ---- VS Code's own user mcp.json (`servers` schema) ------------------
+
+    @staticmethod
+    def vscode_mcp_paths() -> list[Path]:
+        """mcp.json in each VS Code (stable/Insiders) user dir that already exists."""
+        return [d / "mcp.json" for d in _vscode_user_dirs() if d.is_dir()]
+
+    @staticmethod
+    def _vscode_entry() -> dict:
+        entry = {"type": "stdio", "command": exe(), "args": ["proxy"]}
+        home = os.environ.get("RAINDROP_HOME")
+        if home:  # VS Code launches the proxy with its own environment; only a custom home needs telling
+            entry["env"] = {"RAINDROP_HOME": home}
+        return entry
+
+    def _add_vscode_mcp(self, text: str, path: Path) -> str:
+        data = load_json_text(text, path)
+        data.setdefault("servers", {})[constants.MCP_SERVER_NAME] = self._vscode_entry()
+        return dump_json(data)
+
+    @staticmethod
+    def _remove_vscode_mcp(text: str, path: Path) -> str:
+        if not text.strip():
+            return text
+        data = load_json_text(text, path)
+        servers = data.get("servers")
+        if isinstance(servers, dict):
+            servers.pop(constants.MCP_SERVER_NAME, None)
+        return dump_json(data)
+
+    def _plan_vscode_mcp(self, path: Path) -> Change:
+        old, new = edit_file(path, lambda t: self._add_vscode_mcp(t, path))
+        return Change(
+            kind="merge",
+            target=str(path),
+            description=f"Also add '{constants.MCP_SERVER_NAME}' to VS Code's own MCP file {path}",
+            preview=diff(path, old, new) or "(already installed, no change)",
+            component="mcp",
+            _apply=lambda: apply_file_edit(path, "mcp", lambda t: self._add_vscode_mcp(t, path)),
+        )
+
     def plan_install(self, rules: bool) -> list[Change]:
-        changes = [self._plan_mcp(), self._plan_hook()]
+        changes = [self._plan_mcp(), *map(self._plan_vscode_mcp, self.vscode_mcp_paths()),
+                   self._plan_hook()]
         if rules:
             changes.append(self._plan_rules())
         return changes
 
     def uninstall(self, record: ToolRecord) -> None:
         super().uninstall(record)
+        if record.get("mcp"):
+            for path in self.vscode_mcp_paths():
+                if path.is_file():
+                    apply_file_edit(path, "mcp", lambda t, p=path: self._remove_vscode_mcp(t, p))
         if record.get("hook"):
             delete_file(self.hooks_path(), "hook")
 
