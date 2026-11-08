@@ -25,6 +25,7 @@ import typer
 from raindrop import api_client
 from raindrop import config
 from raindrop import proxy_cmd
+from raindrop import share_prompt
 from raindrop import sync_cmd
 from raindrop import tools_cmd
 
@@ -71,9 +72,11 @@ def create_team(
     api_url: str = typer.Option(None, "--api-url", help="Override the API URL."),
     force: bool = typer.Option(False, "--force", help="Replace an existing config."),
     tools: str = typer.Option(None, "--tools", help=tools_cmd.TOOLS_OPTION_HELP),
+    share_choice: str = typer.Option(None, "--share", help=share_prompt.SHARE_OPTION_HELP),
 ):
     """Create a team, join it as the lead, and print a join code for teammates."""
     selection = tools_cmd.validate_tools_option(tools)  # a typo fails here, before anything is created
+    share_pick = share_prompt.validate_share_option(share_choice)
     existing = _guard_existing(force)
     url = _api_url(api_url)
     try:
@@ -86,6 +89,7 @@ def create_team(
     typer.echo(f"Teammates run: raindrop join {resp['join_code']} --name <name> --focus <area>")
     typer.echo(f"Saved credentials to {path}")
     tools_cmd.offer_tools(selection)
+    share_prompt.offer_sharing(share_pick)
 
 
 @app.command("join")
@@ -96,10 +100,12 @@ def join(
     api_url: str = typer.Option(None, "--api-url", help="Override the API URL."),
     force: bool = typer.Option(False, "--force", help="Replace an existing config."),
     tools: str = typer.Option(None, "--tools", help=tools_cmd.TOOLS_OPTION_HELP),
+    share_choice: str = typer.Option(None, "--share", help=share_prompt.SHARE_OPTION_HELP),
 ):
     """Join a team with a join code. Saves your key to ~/.raindrop/config.json, then offers to
     set Raindrop up in the coding tools found on this machine."""
     selection = tools_cmd.validate_tools_option(tools)  # a typo fails here, before anything is joined
+    share_pick = share_prompt.validate_share_option(share_choice)
     existing = _guard_existing(force)
     url = _api_url(api_url)
     try:
@@ -110,6 +116,7 @@ def join(
     typer.secho(f"Joined team '{resp.get('team_name') or resp['team_id']}' as {name}", fg="green")
     typer.echo(f"Saved credentials to {path}")
     tools_cmd.offer_tools(selection)
+    share_prompt.offer_sharing(share_pick)
 
 
 @app.command("invite")
