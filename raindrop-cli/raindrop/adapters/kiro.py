@@ -2,12 +2,14 @@
 
 Kiro CLI adapter (event-capture style).
 
-Kiro keeps chat history in an undocumented SQLite database, so instead of
-tailing a transcript we spool hook events locally and build exchanges from
-that. Hooks installed:
+Kiro keeps chat history in messages.jsonl files under
+~/.kiro/sessions/<workspace_hash>/<session_id>/messages.jsonl.
+Because the Stop hook payload does not include assistant_response (Kiro
+issue #6258), the adapter reads the reply directly from that file at Stop time.
+Hooks installed:
   UserPromptSubmit -> spool the prompt
   PreToolUse       -> spool a tool summary + file paths
-  Stop             -> spool the final assistant text, then sync completed turns
+  Stop             -> read reply from messages.jsonl, spool it, then sync
 Each hook runs `raindrop sync --tool kiro --fail-open`. sync_cmd.py calls
 capture() for every event, then read_new() and pushes.
 
@@ -121,6 +123,81 @@ def _hooks_text() -> str:
 
 def _rules_text() -> str:
     return f"{constants.RULES_START}\n{RULES_BODY}\n{constants.RULES_END}\n"
+
+
+# ---------------------------------------------------------------------------
+# Reading reply from Kiro's messages.jsonl
+# ---------------------------------------------------------------------------
+
+
+def _messages_path(session_id: str) -> Path | None:
+    """Find the messages.jsonl for this session under ~/.kiro/sessions/.
+
+    Kiro stores sessions under a workspace-derived hash directory that we
+    cannot reproduce, so we glob for the session id across all subdirectories.
+    """
+    sessions_dir = kiro_dir() / "sessions"
+    if not sessions_dir.is_dir():
+        return None
+    for candidate in sessions_dir.glob(f"*/{session_id}/messages.jsonl"):
+        return candidate
+    return None
+
+
+def _read_reply_from_messages(session_id: str) -> str:
+    """Read the last completed turn reply from Kiro messages.jsonl.
+
+    Each turn is bounded by turn_start / turn_end records sharing a turnId.
+    The reply is the concatenation of all assistant records with
+    operationType == "Say" (not "Reasoning") in the last completed turn,
+    in the order they appear.
+    """
+    path = _messages_path(session_id)
+    if path is None:
+        return ""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ""
+
+    turns: dict[str, dict] = {}  # turnId -> {"parts": [...], "complete": bool}
+    turn_order: list[str] = []
+
+    for line in data.splitlines():
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        payload = rec.get("payload", {})
+        ptype = payload.get("type")
+        turn_id = payload.get("turnId")
+        if not turn_id:
+            continue
+
+        if ptype == "turn_start":
+            if turn_id not in turns:
+                turn_order.append(turn_id)
+            turns[turn_id] = {"parts": [], "complete": False}
+        elif ptype == "assistant" and payload.get("operationType") == "Say":
+            content = payload.get("content", "")
+            if turn_id in turns and isinstance(content, str) and content.strip():
+                turns[turn_id]["parts"].append(content)
+        elif ptype == "turn_end":
+            if turn_id in turns:
+                turns[turn_id]["complete"] = True
+
+    for turn_id in reversed(turn_order):
+        t = turns.get(turn_id, {})
+        if t.get("complete") and t.get("parts"):
+            text = "\n\n".join(t["parts"]).strip()
+            # Strip surrogate characters that Kiro sometimes writes into
+            # messages.jsonl (lone surrogates from garbled emoji, etc.).
+            # encode/decode with surrogatepass then back to utf-8 removes them.
+            text = text.encode("utf-8", errors="replace").decode("utf-8")
+            return text
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -253,11 +330,12 @@ class KiroAdapter(Adapter):
             summary, files = summarize_tool(payload.get("tool_name"), payload.get("tool_input"))
             record.update(event="tool", text=summary, files=files)
         else:
+            # Kiro's Stop hook payload omits assistant_response (issue #6258).
+            # Fall back to reading the reply from Kiro's own messages.jsonl.
             text = payload.get("assistant_response")
+            if not isinstance(text, str) or not text.strip():
+                text = _read_reply_from_messages(_session_id(payload))
             record.update(event="stop", text=text if isinstance(text, str) else "")
-            model = payload.get("model") or payload.get("modelId") or ""
-            if model:
-                record["model"] = str(model)
         if kind == "prompt" and not record["text"].strip():
             return
         _append(spool_path(record["session_id"]), record)
@@ -322,11 +400,6 @@ class KiroAdapter(Adapter):
                     if isinstance(f, str) and f not in draft.files:
                         draft.files.append(f)
             elif event == "stop" and draft:
-                # Kiro CLI does not include assistant_response in the Stop hook
-                # payload (https://github.com/kirodotdev/Kiro/issues/6258), so
-                # text is always empty here. Accept the exchange regardless so
-                # the prompt and tool context still reaches teammates. When Kiro
-                # ships the payload field, the response will appear automatically.
                 done.append((draft.start, Exchange(
                     session_id=session.session_id,
                     idx=len(done),
@@ -335,7 +408,6 @@ class KiroAdapter(Adapter):
                     assistant_text=text.strip(),
                     tool_summaries=draft.tools,
                     files_touched=repo_relative_files(draft.files, session),
-                    model=rec.get("model") or "",
                 )))
                 draft = None
 

@@ -49,7 +49,14 @@ class Exchange:
         return f"{self.session_id}:{self.idx}"
 
     def to_wire(self) -> ExchangeWire:
-        return ExchangeWire(**asdict(self), id=self.id)
+        d = asdict(self)
+        # Strip surrogate characters that can appear in text captured from
+        # hook payloads (e.g. garbled emoji in user prompts). Surrogates are
+        # not valid UTF-8 and will cause httpx to fail when encoding the body.
+        for key in ("user_text", "assistant_text"):
+            if isinstance(d.get(key), str):
+                d[key] = d[key].encode("utf-8", errors="replace").decode("utf-8")
+        return ExchangeWire(**d, id=self.id)
 
 
 class ReadResult(NamedTuple):
