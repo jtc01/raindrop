@@ -67,7 +67,7 @@ def _fail(e: api_client.ApiError) -> None:
 @app.command("create-team")
 def create_team(
     team_name: str = typer.Argument(..., help="Name for the new team."),
-    name: str = typer.Option(..., "--name", help="Your display name."),
+    name: str = typer.Option(..., "--name", prompt="Your display name", help="Your display name."),
     focus: str = typer.Option("", "--focus", help="What you work on, e.g. 'backend'."),
     api_url: str = typer.Option(None, "--api-url", help="Override the API URL."),
     force: bool = typer.Option(False, "--force", help="Replace an existing config."),
@@ -95,7 +95,7 @@ def create_team(
 @app.command("join")
 def join(
     code: str = typer.Argument(..., help="Join code from your team lead, e.g. K7QX-M9TF."),
-    name: str = typer.Option(..., "--name", help="Your display name."),
+    name: str = typer.Option(..., "--name", prompt="Your display name", help="Your display name."),
     focus: str = typer.Option("", "--focus", help="What you work on, e.g. 'frontend'."),
     api_url: str = typer.Option(None, "--api-url", help="Override the API URL."),
     force: bool = typer.Option(False, "--force", help="Replace an existing config."),
