@@ -5,7 +5,7 @@ MCP endpoint:  http://localhost:8080/mcp
 
 MCP tools:      ping, whoami, search_team_context, get_recent_activity, list_teammates
 Public routes:  GET /health, POST /teams, POST /join
-Authed routes:  /mcp, POST /messages, POST /invite, GET /me, GET /teammates,
+Authed routes:  /mcp, POST /messages, GET /recent (dashboard), POST /invite, GET /me, GET /teammates,
                 POST /rotate-key, POST /leave, POST /remove (lead), GET /codes,
                 POST /codes/revoke — require `Authorization: Bearer <key>`
 """
@@ -24,6 +24,7 @@ from boto3.dynamodb.conditions import Key
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_request
 from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -41,6 +42,9 @@ JOIN_CODE_TTL_SECONDS = 48 * 3600
 JOIN_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/I
 AUTH_CACHE_TTL_SECONDS = 60
 PUBLIC_PATHS = {"/health", "/teams", "/join"}
+# Origins allowed to call the API from a browser (the dashboard). Comma-separated.
+CORS_ALLOW_ORIGINS = [o.strip() for o in os.environ.get(
+    "CORS_ALLOW_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if o.strip()]
 
 _ddb = boto3.resource("dynamodb")
 teams = _ddb.Table(TEAMS_TABLE)
@@ -615,11 +619,42 @@ async def push_messages(request: Request) -> JSONResponse:
     return JSONResponse(result)
 
 
+@mcp.custom_route("/recent", methods=["GET"])
+async def recent_feed(request: Request) -> JSONResponse:
+    """Authed. Feed for the dashboard: the `n` newest team exchanges (query param,
+    default 25, max RECENT_N_MAX), newest first, plus the team's members. Unlike
+    the MCP tool it includes the caller's own exchanges and returns structured JSON."""
+    ident = request.state.raindrop
+    try:
+        n = int(request.query_params.get("n", RECENT_N_MAX))
+    except ValueError:
+        return error(400, "bad_request", "`n` must be an integer.")
+    n = max(1, min(n, RECENT_N_MAX))
+
+    def work():
+        return (recent.recent_activity(ident["team_id"], n),
+                list_team_members(ident["team_id"]))
+
+    try:
+        exchanges, members = await anyio.to_thread.run_sync(work)
+    except Exception:
+        return error(500, "recent_failed", "Could not load recent activity.")
+    for m in members:
+        m["you"] = m["agent_id"] == ident["agent_id"]
+    return JSONResponse({"team_id": ident["team_id"], "members": members, "exchanges": exchanges})
+
+
 # ---------- ASGI app ----------
 # Stateless + JSON responses: required for Lambda (no sticky sessions, no SSE).
 app = mcp.http_app(
     path="/mcp",
     stateless_http=True,
     json_response=True,
-    middleware=[Middleware(AuthMiddleware)],
+    middleware=[
+        # Outermost so browser preflights (OPTIONS, no Authorization header) get
+        # answered before AuthMiddleware would 401 them.
+        Middleware(CORSMiddleware, allow_origins=CORS_ALLOW_ORIGINS,
+                   allow_methods=["GET"], allow_headers=["Authorization"]),
+        Middleware(AuthMiddleware),
+    ],
 )

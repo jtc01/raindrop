@@ -1,10 +1,11 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react"
-import { exchanges, now, teammates, team } from "./data.js"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import * as sample from "./data.js"
+import { fetchFeed, loadConnection, saveConnection } from "./api.js"
 import "./App.css"
 
 const ACTIVE_MS = 30 * 60 * 1000
 
-function formatAgo(ts) {
+function formatAgo(ts, now) {
   const minutes = Math.round((now - ts) / 60000)
   if (minutes < 1) return "just now"
   if (minutes < 60) return `${minutes}m ago`
@@ -12,10 +13,6 @@ function formatAgo(ts) {
   if (hours < 24) return `${hours}h ago`
   const days = Math.round(hours / 24)
   return days === 1 ? "1d ago" : `${days}d ago`
-}
-
-function personById(id) {
-  return teammates.find((person) => person.id === id)
 }
 
 function Reply({ id, text, open, onToggle }) {
@@ -54,7 +51,12 @@ function Reply({ id, text, open, onToggle }) {
   )
 }
 
-function App() {
+function Feed({ data, onDisconnect }) {
+  const { exchanges, now, teammates, team } = data
+  const personById = useCallback(
+    (id) => teammates.find((person) => person.id === id) ?? { name: "Unknown", focus: "" },
+    [teammates],
+  )
   const [selectedId, setSelectedId] = useState(null)
   const [query, setQuery] = useState("")
   const [openId, setOpenId] = useState(null)
@@ -65,11 +67,11 @@ function App() {
       times[exchange.agentId] = Math.max(times[exchange.agentId] ?? 0, exchange.ts)
     }
     return times
-  }, [])
+  }, [exchanges])
 
   const newest = useMemo(
-    () => Math.max(...exchanges.map((exchange) => exchange.ts)),
-    [],
+    () => Math.max(0, ...exchanges.map((exchange) => exchange.ts)),
+    [exchanges],
   )
 
   const visible = useMemo(() => {
@@ -91,7 +93,7 @@ function App() {
         return haystack.includes(needle)
       })
       .sort((a, b) => b.ts - a.ts)
-  }, [query, selectedId])
+  }, [exchanges, personById, query, selectedId])
 
   function selectPerson(id) {
     setSelectedId((current) => (current === id ? null : id))
@@ -106,7 +108,10 @@ function App() {
         <p className="status">
           <span>{teammates.length} people</span>
           <span className="sep" aria-hidden="true" />
-          <span>last sync {formatAgo(newest)}</span>
+          <span>last sync {newest ? formatAgo(newest, now) : "never"}</span>
+          <button type="button" className="more" onClick={onDisconnect}>
+            {data.sample ? "Connect" : "Disconnect"}
+          </button>
         </p>
       </header>
 
@@ -124,7 +129,7 @@ function App() {
             </span>
           </button>
           {teammates.map((person) => {
-            const active = now - lastActive[person.id] < ACTIVE_MS
+            const active = now - (lastActive[person.id] ?? 0) < ACTIVE_MS
             const selected = selectedId === person.id
             return (
               <button
@@ -142,7 +147,7 @@ function App() {
                   <span className="name">{person.name}</span>
                   <span className="focus">{person.focus}</span>
                 </span>
-                <span className="when">{formatAgo(lastActive[person.id])}</span>
+                <span className="when">{lastActive[person.id] ? formatAgo(lastActive[person.id], now) : ""}</span>
               </button>
             )
           })}
@@ -164,7 +169,9 @@ function App() {
           </form>
 
           {visible.length === 0 ? (
-            <p className="empty">Nothing matches that search.</p>
+            <p className="empty">
+              {exchanges.length ? "Nothing matches that search." : "No exchanges synced yet."}
+            </p>
           ) : (
             <ol className="cards">
               {visible.map((exchange) => {
@@ -177,7 +184,7 @@ function App() {
                         <span className="name">{person.name}</span>
                         <span className="focus">{person.focus}</span>
                         <time dateTime={new Date(exchange.ts).toISOString()}>
-                          {formatAgo(exchange.ts)}
+                          {formatAgo(exchange.ts, now)}
                         </time>
                       </header>
                       <h2>{exchange.prompt}</h2>
@@ -203,6 +210,84 @@ function App() {
         </main>
       </div>
     </div>
+  )
+}
+
+function Connect({ error, onConnect, onSample }) {
+  const [apiUrl, setApiUrl] = useState("")
+  const [apiKey, setApiKey] = useState("")
+  return (
+    <div className="app">
+      <main className="feed">
+        <form
+          className="search"
+          onSubmit={(event) => {
+            event.preventDefault()
+            onConnect({ apiUrl: apiUrl.trim(), apiKey: apiKey.trim() })
+          }}
+        >
+          <label htmlFor="url">API URL</label>
+          <input id="url" required value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} />
+          <label htmlFor="key">API key</label>
+          <input
+            id="key"
+            type="password"
+            required
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+          />
+          {error && <p className="empty">{error}</p>}
+          <p className="count">
+            The key is kept in this browser only (find it in ~/.raindrop/config.json).
+          </p>
+          <button type="submit" className="more">Connect</button>{" "}
+          <button type="button" className="more" onClick={onSample}>Use sample data</button>
+        </form>
+      </main>
+    </div>
+  )
+}
+
+const SAMPLE = { ...sample, sample: true }
+
+function App() {
+  const [connection, setConnection] = useState(loadConnection)
+  const [data, setData] = useState(null)
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    if (!connection) return
+    let cancelled = false
+    const load = () =>
+      fetchFeed(connection)
+        .then((feed) => !cancelled && (setData(feed), setError("")))
+        .catch((e) => !cancelled && setError(e.message))
+    load()
+    const timer = setInterval(load, 30000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [connection])
+
+  function disconnect() {
+    saveConnection(null)
+    setConnection(null)
+    setData(null)
+  }
+
+  if (data) return <Feed data={data} onDisconnect={disconnect} />
+  if (connection && !error) return <p className="empty">Loading…</p>
+  return (
+    <Connect
+      error={error}
+      onConnect={(c) => {
+        saveConnection(c)
+        setError("")
+        setConnection(c)
+      }}
+      onSample={() => setData(SAMPLE)}
+    />
   )
 }
 
