@@ -63,15 +63,16 @@ def _hook_command() -> str:
 # ---------------------------------------------------------------------------
 
 
+def _mcp_entry() -> dict:
+    # alwaysLoad: Claude Code otherwise defers MCP tools behind a ToolSearch step, which
+    # costs the agent a whole extra turn before its first search_team_context call.
+    return {"type": "stdio", "command": exe(), "args": ["proxy"], "env": {}, "alwaysLoad": True}
+
+
 def _add_mcp_to_json(text: str, path: Path) -> str:
     data = load_json_text(text, path)
     servers = data.setdefault("mcpServers", {})
-    servers[constants.MCP_SERVER_NAME] = {
-        "type": "stdio",
-        "command": exe(),
-        "args": ["proxy"],
-        "env": {},
-    }
+    servers[constants.MCP_SERVER_NAME] = _mcp_entry()
     return dump_json(data)
 
 
@@ -231,13 +232,18 @@ class ClaudeCodeAdapter(Adapter):
             self._mcp_method = "cli"
             # Full path from which(): on Windows `claude` is often a .cmd shim
             # that a bare name can't launch.
-            add = [claude, "mcp", "add", "--scope", "user", server, "--", exe(), "proxy"]
+            add = [claude, "mcp", "add-json", "--scope", "user", server, json.dumps(_mcp_entry())]
+            # Older Claude Code without add-json (or without alwaysLoad): plain add still works,
+            # the tools are just deferred behind ToolSearch.
+            fallback = [claude, "mcp", "add", "--scope", "user", server, "--", exe(), "proxy"]
             remove = [claude, "mcp", "remove", "--scope", "user", server]
 
             def run() -> None:
                 # Remove first so re-running install replaces rather than errors.
                 subprocess.run(remove, capture_output=True, text=True)
                 r = subprocess.run(add, capture_output=True, text=True)
+                if r.returncode != 0:
+                    r = subprocess.run(fallback, capture_output=True, text=True)
                 if r.returncode != 0:
                     raise InstallError("mcp", (r.stderr or r.stdout).strip())
 
