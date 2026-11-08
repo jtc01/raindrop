@@ -89,15 +89,20 @@ def _hydrate(s3, key: str) -> Optional[dict[str, Any]]:
 
 
 def recent_activity(
-    team_id: str, n: int, exclude_agent_id: Optional[str] = None, s3=None
+    team_id: str, n: int, exclude_agent_id: Optional[str] = None,
+    include_only_agent_id: Optional[str] = None, s3=None
 ) -> list[dict[str, Any]]:
     """The n newest exchanges for team_id, newest first (by exchange `ts`).
     `exclude_agent_id` leaves out one agent (the caller, to show only teammates).
+    `include_only_agent_id` restricts results to a single agent.
     The team prefix is part of every listing, so other teams' data is never read."""
     s3 = s3 or _s3
     candidates: list[tuple[Any, str]] = []
     for prefix in _agent_prefixes(s3, team_id):
-        if exclude_agent_id and prefix.rstrip("/").endswith("/" + exclude_agent_id):
+        agent_id = prefix.rstrip("/").rsplit("/", 1)[-1]
+        if exclude_agent_id and agent_id == exclude_agent_id:
+            continue
+        if include_only_agent_id and agent_id != include_only_agent_id:
             continue
         candidates.extend(_newest_keys(s3, prefix, n))
 

@@ -7,7 +7,7 @@ def client(monkeypatch):
         "key_hash": h, "team_id": "t1", "agent_id": "me", "display_name": "Me"})
     seen = {}
 
-    def fake_recent(team_id, n, exclude_agent_id=None, s3=None):
+    def fake_recent(team_id, n, exclude_agent_id=None, include_only_agent_id=None, s3=None):
         seen.update(team_id=team_id, n=n, exclude=exclude_agent_id)
         return [{"agent_id": "bob", "ts": 5, "user_text": "q", "assistant_text": "a", "files_touched": []}]
 

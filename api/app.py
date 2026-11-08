@@ -681,18 +681,24 @@ async def push_messages(request: Request) -> JSONResponse:
 @mcp.custom_route("/recent", methods=["GET"])
 async def recent_feed(request: Request) -> JSONResponse:
     """Authed. Feed for the dashboard: the `n` newest team exchanges (query param,
-    default 25, max RECENT_N_MAX), newest first, plus the team's members. Unlike
-    the MCP tool it includes the caller's own exchanges and returns structured JSON."""
+    default RECENT_N_MAX, max RECENT_N_MAX), newest first, plus the team's members.
+    Optional `agent_id` query param filters to a single agent's exchanges.
+    Unlike the MCP tool it includes the caller's own exchanges and returns structured JSON."""
     ident = request.state.raindrop
     try:
         n = int(request.query_params.get("n", RECENT_N_MAX))
     except ValueError:
         return error(400, "bad_request", "`n` must be an integer.")
     n = max(1, min(n, RECENT_N_MAX))
+    filter_agent_id = request.query_params.get("agent_id") or None
 
     def work():
-        return (recent.recent_activity(ident["team_id"], n),
-                list_team_members(ident["team_id"]))
+        exchanges = recent.recent_activity(
+            ident["team_id"], n,
+            include_only_agent_id=filter_agent_id,
+        )
+        members = list_team_members(ident["team_id"])
+        return exchanges, members
 
     try:
         exchanges, members = await anyio.to_thread.run_sync(work)

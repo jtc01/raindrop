@@ -138,7 +138,7 @@ function Feed({ data, onDisconnect }) {
               <span className="focus">{exchanges.length} exchanges</span>
             </span>
           </button>
-          {teammates.map((person) => {
+          {[...teammates].sort((a, b) => (lastActive[b.id] ?? 0) - (lastActive[a.id] ?? 0)).map((person) => {
             const active = now - (lastActive[person.id] ?? 0) < ACTIVE_MS
             const selected = selectedId === person.id
             return (
