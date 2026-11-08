@@ -34,12 +34,12 @@ Verification status:
 
 | Tool | Parser/adapter checked against | Hook seen firing in the real app |
 |---|---|---|
-| Claude Code | real transcripts; a manual run of the installed hook uploaded a real session | yes (its cursor advances after real turns) |
-| Antigravity | a real transcript and a real Stop payload | **yes**, in the `agy` CLI (the hook ran and one real turn became one exchange); the IDE is untested |
-| GitHub Copilot | real VS Code Copilot Chat transcripts, and a real session from Copilot's own store | partly: Copilot loaded the hook (shown under Hooks in its settings), but no turn has finished because the test account has no usable model |
-| Kiro | synthetic events in the tests | not yet (app not installed on the dev machine) |
-| Codex | synthetic transcripts in the tests | not yet (app not installed on the dev machine) |
-| Cursor | Cursor's hooks documentation (field names, file format, timeout) | not yet (app not installed on the dev machine) |
+| Claude Code | real transcripts | **yes**, in the desktop app and the CLI (real turns upload); the VS Code extension is untested |
+| Antigravity | a real transcript and a real Stop payload | yes, in the `agy` CLI and the app (the hook runs and turns are read); uploads from the app in a shared folder are not yet confirmed |
+| GitHub Copilot | real VS Code Copilot Chat transcripts, and a real session from Copilot's own store | **yes**, confirmed by the team |
+| Kiro | synthetic events in the tests | **yes**, confirmed by the team |
+| Codex | real transcripts from the Codex app and CLI | **yes**, in the app and the CLI once the hook is approved (Settings > Hooks, or `/hooks` in the CLI) |
+| Cursor | Cursor's hooks documentation and real events | **yes**, confirmed by the team |
 
 For all six, the real `raindrop tools add` was also run into an isolated fake home, and the exact hook
 command line it wrote was executed through the shell with a realistic payload (your real Claude Code,
