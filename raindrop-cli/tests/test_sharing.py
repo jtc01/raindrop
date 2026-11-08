@@ -101,3 +101,26 @@ def test_sync_skips_unshared_repo_and_advances_cursor(env):
         f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "yes"}]}}) + "\n")
     assert sync_cmd.run_sync(payload, "claude-code", httpx.MockTransport(handler)) == 1
     assert [e["user_text"] for e in sent[0]["exchanges"]] == ["again"]
+
+
+def test_a_linked_git_worktree_counts_as_its_main_repo(tmp_path):
+    import shutil
+    import subprocess
+
+    from raindrop import config
+
+    if not shutil.which("git"):
+        pytest.skip("git not installed")
+    main = tmp_path / "main"
+    main.mkdir()
+    git = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run([*git, "init", "-q"], cwd=main, check=True)
+    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "x"], cwd=main, check=True)
+    wt = tmp_path / "wt"
+    subprocess.run([*git, "worktree", "add", "-q", str(wt), "-b", "side"], cwd=main, check=True)
+    (wt / "sub").mkdir()
+
+    assert config.repo_root(wt / "sub") == main.resolve()
+    assert config.repo_root(main) == main.resolve()
+    cfg = {"sharing": {"mode": "opt_in", "shared_repos": [str(main.resolve())]}}
+    assert config.should_share(str(wt), cfg)
