@@ -197,6 +197,9 @@ class CursorAdapter(Adapter):
             "event": event,
             "ts": _timestamp(payload.get("timestamp")),
         }
+        model = payload.get("model")  # Cursor includes the chat's model in its hook payloads
+        if isinstance(model, str) and model.strip():
+            record["model"] = model.strip()
         if event == "beforeSubmitPrompt":
             text = payload.get("prompt")
             if not isinstance(text, str) or not text.strip():
@@ -278,6 +281,7 @@ class CursorAdapter(Adapter):
                     "assistant_text": "",
                     "tools": [],
                     "files": [],
+                    "model": record.get("model", ""),
                     "complete": False,
                 })
             elif event == "postToolUse" and drafts:
@@ -291,6 +295,8 @@ class CursorAdapter(Adapter):
                 # Cursor may reply before each tool call, so the last reply wins
                 # and the turn only closes on `stop` or when the next prompt starts.
                 drafts[-1]["assistant_text"] = record["text"]
+                if record.get("model"):
+                    drafts[-1]["model"] = record["model"]
             elif event == "stop" and drafts and drafts[-1]["assistant_text"]:
                 drafts[-1]["complete"] = True
 
@@ -307,6 +313,7 @@ class CursorAdapter(Adapter):
                 assistant_text=draft["assistant_text"],
                 tool_summaries=draft["tools"],
                 files_touched=repo_relative_files(draft["files"], session),
+                model=draft["model"],
             )
             for idx, draft in enumerate(drafts)
             if draft["complete"] and draft["start"] >= cursor

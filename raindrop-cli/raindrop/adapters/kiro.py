@@ -200,6 +200,33 @@ def _read_reply_from_messages(session_id: str) -> str:
     return ""
 
 
+def _read_model_from_messages(session_id: str) -> str:
+    """The model named in Kiro's messages.jsonl, if it records one (the newest mention wins).
+    Kiro's Stop payload has no model either, so this is the only place it could come from."""
+    path = _messages_path(session_id)
+    if path is None:
+        return ""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ""
+    found = ""
+    for line in data.splitlines():
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        payload = rec.get("payload")
+        for source in (payload if isinstance(payload, dict) else {}, rec):
+            for key in ("modelId", "model_id", "modelName", "model"):
+                value = source.get(key)
+                if isinstance(value, str) and value.strip():
+                    found = value.strip()
+    return found
+
+
 # ---------------------------------------------------------------------------
 # Event capture
 # ---------------------------------------------------------------------------
@@ -336,6 +363,9 @@ class KiroAdapter(Adapter):
             if not isinstance(text, str) or not text.strip():
                 text = _read_reply_from_messages(_session_id(payload))
             record.update(event="stop", text=text if isinstance(text, str) else "")
+            model = payload.get("model") or payload.get("modelId") or _read_model_from_messages(_session_id(payload))
+            if model:
+                record["model"] = str(model)
         if kind == "prompt" and not record["text"].strip():
             return
         _append(spool_path(record["session_id"]), record)
@@ -408,6 +438,7 @@ class KiroAdapter(Adapter):
                     assistant_text=text.strip(),
                     tool_summaries=draft.tools,
                     files_touched=repo_relative_files(draft.files, session),
+                    model=rec.get("model") or "",
                 )))
                 draft = None
 

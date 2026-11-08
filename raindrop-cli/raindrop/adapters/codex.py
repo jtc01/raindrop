@@ -191,6 +191,7 @@ class _Draft:
         self.after_tool: list[str] = []
         self.tools: list[str] = []
         self.files: list[str] = []
+        self.model = ""
 
     def finish(self, session: SessionRef, idx: int) -> Exchange | None:
         answer = "\n\n".join(self.after_tool or self.assistant_parts).strip()
@@ -204,6 +205,7 @@ class _Draft:
             assistant_text=answer,
             tool_summaries=self.tools,
             files_touched=repo_relative_files(self.files, session),
+            model=self.model,
         )
 
 
@@ -340,6 +342,7 @@ class CodexAdapter(Adapter):
             cursor = 0
 
         drafts: list[_Draft] = []
+        current_model = ""
         consumed = 0
         pos = 0
         while pos < len(data):
@@ -359,11 +362,16 @@ class CodexAdapter(Adapter):
             if not isinstance(record, dict):
                 raise TranscriptError(f"Unexpected Codex transcript record at byte {start}")
 
+            if record.get("type") == "turn_context":  # names the model for the prompt that follows
+                model = (record.get("payload") or {}).get("model")
+                if isinstance(model, str) and model:
+                    current_model = model
             role, payload = _record_data(record)
             if role == "user":
                 prompt = _text(payload.get("content"))
                 if prompt and not _is_injected(prompt):
                     drafts.append(_Draft(start, _epoch(record.get("timestamp")), prompt))
+                    drafts[-1].model = current_model
             elif role == "assistant" and drafts:
                 content = payload.get("content")
                 if isinstance(content, list):

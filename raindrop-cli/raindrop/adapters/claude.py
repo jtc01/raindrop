@@ -170,6 +170,7 @@ class _Draft:
         self.all_texts: list[str] = []
         self.tool_summaries: list[str] = []
         self.files: list[str] = []
+        self.model = ""  # the model that answered (from the transcript's assistant messages)
 
     def add_assistant(self, content: object) -> None:
         for b in _blocks(content):
@@ -199,6 +200,7 @@ class _Draft:
             assistant_text=self.assistant_text,
             tool_summaries=self.tool_summaries,
             files_touched=repo_relative_files(self.files, session),
+            model=self.model,
         )
 
 
@@ -383,6 +385,9 @@ class ClaudeCodeAdapter(Adapter):
                 msg = entry.get("message")
                 if isinstance(msg, dict):
                     drafts[-1].add_assistant(msg.get("content"))
+                    model = msg.get("model")
+                    if isinstance(model, str) and model and not model.startswith("<"):  # "<synthetic>" etc.
+                        drafts[-1].model = model
 
         new_cursor = consumed
         if drafts and not drafts[-1].assistant_text:

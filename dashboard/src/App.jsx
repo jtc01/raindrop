@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import * as sample from "./data.js"
-import { fetchFeed, loadConnection, saveConnection } from "./api.js"
+import { EVERYONE_LIMIT, PER_PERSON, fetchFeed, loadConnection, saveConnection } from "./api.js"
 import "./App.css"
 
 const ACTIVE_MS = 30 * 60 * 1000
@@ -84,10 +84,20 @@ function Feed({ data, onDisconnect }) {
     [exchanges],
   )
 
+  // What the selected tab holds: one person's newest PER_PERSON chats, or the newest
+  // EVERYONE_LIMIT chats sent by anyone.
+  const pool = useMemo(
+    () =>
+      [...exchanges]
+        .filter((exchange) => !selectedId || exchange.agentId === selectedId)
+        .sort((a, b) => b.ts - a.ts)
+        .slice(0, selectedId ? PER_PERSON : EVERYONE_LIMIT),
+    [exchanges, selectedId],
+  )
+
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    return exchanges
-      .filter((exchange) => !selectedId || exchange.agentId === selectedId)
+    return pool
       .filter((exchange) => {
         if (!needle) return true
         const person = personById(exchange.agentId)
@@ -103,7 +113,7 @@ function Feed({ data, onDisconnect }) {
         return haystack.includes(needle)
       })
       .sort((a, b) => b.ts - a.ts)
-  }, [exchanges, personById, query, selectedId])
+  }, [pool, personById, query])
 
   function selectPerson(id) {
     setSelectedId((current) => (current === id ? null : id))
@@ -135,7 +145,7 @@ function Feed({ data, onDisconnect }) {
           >
             <span className="who">
               <span className="name">Everyone</span>
-              <span className="focus">{exchanges.length} exchanges</span>
+              <span className="focus">latest {Math.min(exchanges.length, EVERYONE_LIMIT)} chats</span>
             </span>
           </button>
           {[...teammates].sort((a, b) => (lastActive[b.id] ?? 0) - (lastActive[a.id] ?? 0)).map((person) => {
@@ -174,7 +184,9 @@ function Feed({ data, onDisconnect }) {
               onChange={(event) => setQuery(event.target.value)}
             />
             <p className="count">
-              {visible.length} of {exchanges.length} exchanges
+              {query.trim()
+                ? `${visible.length} of ${pool.length} match`
+                : `${pool.length} ${pool.length === 1 ? "chat" : "chats"}`}
             </p>
           </form>
 
@@ -193,9 +205,12 @@ function Feed({ data, onDisconnect }) {
                       <header className="card-meta">
                         <span className="name">{person.name}</span>
                         <span className="focus">{person.focus}</span>
-                        {exchange.model && (
-                          <span className="model">{exchange.model}</span>
-                        )}
+                        <span
+                          className={exchange.model ? "model" : "model model-unknown"}
+                          title={exchange.model ? "Model used for this prompt" : "This tool doesn't report which model it used"}
+                        >
+                          {exchange.model || "model unknown"}
+                        </span>
                         <time dateTime={new Date(exchange.ts).toISOString()}>
                           {formatAgo(exchange.ts, now)}
                         </time>

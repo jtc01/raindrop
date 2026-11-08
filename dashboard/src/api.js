@@ -2,6 +2,11 @@
 // shape the dashboard renders.
 const STORAGE_KEY = "raindrop.connection"
 
+// How many chats each view shows: every person is limited to their own newest PER_PERSON,
+// and the Everyone tab shows the newest EVERYONE_LIMIT sent by anyone.
+export const PER_PERSON = 25
+export const EVERYONE_LIMIT = 50
+
 export function loadConnection() {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY)) ?? null
@@ -19,8 +24,8 @@ export async function fetchFeed({ apiUrl, apiKey }) {
   const base = apiUrl.replace(/\/+$/, "")
   const headers = { Authorization: `Bearer ${apiKey}` }
 
-  // First fetch: get members + the Everyone pool (50 * memberCount exchanges).
-  const membersRes = await fetch(`${base}/recent?n=50`, { headers })
+  // First fetch: the members, plus the newest EVERYONE_LIMIT chats sent by anyone.
+  const membersRes = await fetch(`${base}/recent?n=${EVERYONE_LIMIT}`, { headers })
   if (membersRes.status === 401) throw new Error("API key rejected. Run `raindrop doctor` or rejoin.")
   if (!membersRes.ok) throw new Error(`API returned ${membersRes.status}`)
   const body = await membersRes.json()
@@ -31,19 +36,20 @@ export async function fetchFeed({ apiUrl, apiKey }) {
     focus: m.focus,
   }))
 
-  // Fetch 50 exchanges per person in parallel.
+  // Fetch each person's own newest PER_PERSON chats in parallel, so a quiet person still shows
+  // theirs when someone else dominates the Everyone feed.
   const perPersonResults = await Promise.all(
     members.map(({ id }) =>
-      fetch(`${base}/recent?n=50&agent_id=${encodeURIComponent(id)}`, { headers })
+      fetch(`${base}/recent?n=${PER_PERSON}&agent_id=${encodeURIComponent(id)}`, { headers })
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`API returned ${r.status}`))))
         .then((b) => b.exchanges ?? [])
     )
   )
 
-  // Deduplicate by exchange id across all per-person results.
+  // Deduplicate by exchange id across the everyone feed and the per-person results.
   const seen = new Set()
   const allExchanges = []
-  for (const group of perPersonResults) {
+  for (const group of [body.exchanges ?? [], ...perPersonResults]) {
     for (const e of group) {
       const key = `${e.agent_id}:${e.session_id}:${e.idx}`
       if (!seen.has(key)) {
