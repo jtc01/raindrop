@@ -172,6 +172,8 @@ def test_repo_relative_files_uses_git_root_above_cwd(repo, tmp_path):
 
 
 def test_repo_relative_files_without_git_treats_cwd_as_root(tmp_path):
+    if any((p / ".git").exists() for p in (tmp_path.resolve(), *tmp_path.resolve().parents)):
+        pytest.skip("a parent of the temp dir is a git repo (for example a home folder under git)")
     cwd = (tmp_path / "loose").resolve()
     cwd.mkdir()
     session = SessionRef("s", None, str(cwd))
