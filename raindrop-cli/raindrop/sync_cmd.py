@@ -36,7 +36,7 @@ from raindrop import api_client
 from raindrop import config
 from raindrop.redact import LocalIdentifiers, load_env_secrets, redact_obj, scrub_obj
 from raindrop.adapters.base import Adapter, SessionRef
-from raindrop.adapters.registry import get_adapter
+from raindrop.adapters.registry import all_names, get_adapter
 from raindrop.constants import BATCH_SIZE
 from raindrop.errors import NotJoinedError, RaindropError
 
@@ -290,6 +290,31 @@ def _skip_reason(cwd: str | None, cfg: dict) -> str:
     return "sharing is opt-in and this repo hasn't been shared (`raindrop share --repo` to share it)"
 
 
+def detect_dry_run_tool(cwd: str | Path | None = None) -> str:
+    """The one tool with a session in this repo, for `--dry-run` without `--tool`.
+
+    Errors if none or several match, so the preview never silently shows the
+    wrong tool's session."""
+    if not config.load():
+        raise NotJoinedError()
+    repo = config.repo_root(cwd)
+    found: list[str] = []
+    for name in all_names():
+        try:
+            if get_adapter(name).latest_session(repo) is not None:
+                found.append(name)
+        except (ImportError, RaindropError):
+            continue  # adapter missing/broken, or one that can't look sessions up yet
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        raise RaindropError(f"No session from any supported tool found for {repo}.")
+    raise RaindropError(
+        f"Sessions from several tools found for {repo}: {', '.join(found)}. "
+        "Pick one with --tool."
+    )
+
+
 def run_dry_run(payload: dict | None, tool: str, cwd: str | Path | None = None) -> DryRunReport:
     """Everything run_sync would do up to the upload, with no writes at all:
     no capture/spooling, no push, no cursor or failure-state update.
@@ -434,7 +459,11 @@ def _hook_reply(tool: str) -> None:
 
 
 def sync(
-    tool: str = typer.Option("claude-code", "--tool", help="Which tool's hook is calling."),
+    tool: str | None = typer.Option(
+        None, "--tool",
+        help="Which tool's hook is calling (default claude-code). With --dry-run and no "
+             "hook payload, defaults to the one tool that has a session in this repo.",
+    ),
     fail_open: bool = typer.Option(
         False, "--fail-open",
         help="Always exit 0 and log errors to ~/.raindrop/sync.log. Needed for hooks "
@@ -454,12 +483,16 @@ def sync(
     """
     if dry_run:
         try:
-            report = run_dry_run(_read_optional_payload(), tool)
+            payload = _read_optional_payload()
+            if tool is None:
+                tool = "claude-code" if payload is not None else detect_dry_run_tool()
+            report = run_dry_run(payload, tool)
         except (RaindropError, json.JSONDecodeError, OSError) as e:
             typer.secho(f"raindrop sync --dry-run failed: {e}", fg="red", err=True)
             raise typer.Exit(1)
         typer.echo(format_dry_run(report))
         return
+    tool = tool or "claude-code"
     try:
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):

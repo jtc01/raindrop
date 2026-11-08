@@ -157,7 +157,32 @@ def test_tool_without_lookup_explains_how_to_use_payload(env):
 def test_no_session_in_repo_is_an_error(env):
     result = runner.invoke(cli.app, ["sync", "--dry-run"], input="")
     assert result.exit_code == 1
+    assert "No session from any supported tool found" in result.output
+
+    result = runner.invoke(cli.app, ["sync", "--tool", "claude-code", "--dry-run"], input="")
+    assert result.exit_code == 1
     assert "No Claude Code session found" in result.output
+
+
+def _kiro_turn(env, sid="k1"):
+    a = get_adapter("kiro")
+    a.capture({"hook_event_name": "UserPromptSubmit", "session_id": sid, "cwd": str(env), "prompt": "hi"})
+    a.capture({"hook_event_name": "Stop", "session_id": sid, "cwd": str(env), "assistant_response": "yo"})
+
+
+def test_dry_run_without_tool_finds_the_only_tool_with_a_session(env):
+    _kiro_turn(env)
+    result = runner.invoke(cli.app, ["sync", "--dry-run"], input="")
+    assert result.exit_code == 0, result.output
+    assert "(kiro," in result.output
+
+
+def test_dry_run_without_tool_asks_when_several_tools_match(env):
+    _kiro_turn(env)
+    claude_transcript("s1", env, turn("q", "a"))
+    result = runner.invoke(cli.app, ["sync", "--dry-run"], input="")
+    assert result.exit_code == 1
+    assert "claude-code, kiro" in result.output and "--tool" in result.output
 
 
 # ---- the preview itself -----------------------------------------------------
