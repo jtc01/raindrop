@@ -226,6 +226,12 @@ class CodexAdapter(Adapter):
     name = "codex"
     display_name = "Codex"
 
+    def post_install_note(self) -> str | None:
+        # Codex skips a hook until it has been reviewed and trusted, and the trust is tied to the
+        # hook's exact text, so this is needed after the first install and after any change to it.
+        return ("approve the new Raindrop hook before it runs. In the Codex app open Settings > Hooks "
+                "(or \"Review hooks\" in the composer); in the CLI type /hooks. Then restart Codex.")
+
     def detect(self) -> bool:
         return shutil.which("codex") is not None or _codex_dir().is_dir()
 

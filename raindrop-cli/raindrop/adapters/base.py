@@ -127,6 +127,11 @@ class Adapter(ABC):
             f"{self.display_name} sessions can't be looked up yet; "
             "pipe a hook payload into `raindrop sync --dry-run` instead."
         )
+    def post_install_note(self) -> str | None:
+        """Something the person must do in the tool itself after `raindrop tools add`
+        (for example approve the new hook). Printed after a successful install; None if nothing."""
+        return None
+
     def hook_stdout(self) -> str | None:
         """Text `raindrop sync` prints to stdout when this tool's hook finishes.
 

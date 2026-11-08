@@ -69,6 +69,9 @@ def install_tool(tool: str, *, dry_run: bool = False, yes: bool = False, rules: 
     if not status.hook:
         typer.echo(f"Note: auto-sync isn't available for {adapter.display_name} yet. "
                    "It can read your team's context, but won't share your own sessions.")
+    note = adapter.post_install_note()
+    if note:
+        typer.secho(f"Next step in {adapter.display_name}: {note}", fg="yellow")
     return True
 
 
