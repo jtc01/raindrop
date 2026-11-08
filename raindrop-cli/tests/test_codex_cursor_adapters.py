@@ -14,6 +14,7 @@ from raindrop.adapters.cursor import CursorAdapter
 class CodexAdapterTests(unittest.TestCase):
     def test_reads_completed_turn_into_shared_exchange(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / ".git").mkdir()  # this folder is the repo root, wherever the temp dir lives
             path = Path(temp) / "rollout-session-1.jsonl"
             records = [
                 {
@@ -78,9 +79,12 @@ class CodexAdapterTests(unittest.TestCase):
                 }
             }), encoding="utf-8")
             adapter = CodexAdapter()
-            with patch("raindrop.adapters.codex._hooks_path", return_value=path):
-                adapter.plan_install(rules=False)[0].run()
-                adapter.plan_install(rules=False)[0].run()
+            with (
+                patch("raindrop.adapters.codex._hooks_path", return_value=path),
+                patch("raindrop.adapters.codex._mcp_path", return_value=Path(temp) / "config.toml"),
+            ):
+                for _ in range(2):
+                    next(c for c in adapter.plan_install(rules=False) if c.component == "hook").run()
             hooks = json.loads(path.read_text(encoding="utf-8"))["hooks"]["Stop"]
 
         commands = [
@@ -140,6 +144,7 @@ class CursorAdapterTests(unittest.TestCase):
 
     def test_spools_cursor_events_as_shared_exchange(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / ".git").mkdir()  # this folder is the repo root, wherever the temp dir lives
             spool = Path(temp) / "cursor.jsonl"
             adapter = CursorAdapter()
             payload_base = {"conversation_id": "conversation-1", "cwd": temp}
@@ -181,9 +186,12 @@ class CursorAdapterTests(unittest.TestCase):
                 },
             }), encoding="utf-8")
             adapter = CursorAdapter()
-            with patch("raindrop.adapters.cursor._hooks_path", return_value=path):
-                adapter.plan_install(rules=False)[0].run()
-                adapter.plan_install(rules=False)[0].run()
+            with (
+                patch("raindrop.adapters.cursor._hooks_path", return_value=path),
+                patch("raindrop.adapters.cursor._mcp_path", return_value=Path(temp) / "mcp.json"),
+            ):
+                for _ in range(2):
+                    next(c for c in adapter.plan_install(rules=False) if c.component == "hook").run()
             data = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(data["hooks"]["stop"][0]["command"], "echo keep")

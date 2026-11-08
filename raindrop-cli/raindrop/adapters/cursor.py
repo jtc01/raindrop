@@ -1,4 +1,12 @@
-"""Cursor adapter prototype using hook-event spooling."""
+"""Cursor adapter using hook-event spooling.
+
+Install side:
+  - MCP:  ~/.cursor/mcp.json, under `mcpServers`, so Cursor can read team context.
+  - Hook: ~/.cursor/hooks.json entries for the prompt, tool, response and stop events,
+          each running `raindrop sync --tool cursor`.
+  Cursor has no global rules file (rules are per project or set in its UI), so
+  `--rules` has nothing to write and is ignored.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +17,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from raindrop.adapters._common import json_change, repo_relative_files, validate_session_id, newest_session_in_repo, jsonl_head
+from raindrop import constants
+from raindrop.adapters._common import (
+    apply_file_edit,
+    diff,
+    dump_json,
+    edit_file,
+    exe,
+    json_change,
+    jsonl_head,
+    load_json_text,
+    newest_session_in_repo,
+    repo_relative_files,
+    validate_session_id,
+)
 from raindrop.adapters.base import Adapter, Change, SessionRef
 from raindrop.errors import TranscriptError
 from raindrop.models import Cursor, Exchange, ReadResult, ToolRecord
@@ -25,6 +46,25 @@ def _cursor_dir() -> Path:
 
 def _hooks_path() -> Path:
     return _cursor_dir() / "hooks.json"
+
+
+def _mcp_path() -> Path:
+    return _cursor_dir() / "mcp.json"
+
+
+def _mcp_transform(text: str, path: Path, install: bool) -> str:
+    data = load_json_text(text, path)
+    if install:
+        data.setdefault("mcpServers", {})[constants.MCP_SERVER_NAME] = {
+            "command": exe(),
+            "args": ["proxy"],
+            "env": {},
+        }
+    else:
+        servers = data.get("mcpServers")
+        if isinstance(servers, dict):
+            servers.pop(constants.MCP_SERVER_NAME, None)
+    return dump_json(data)
 
 
 def _spool_path(session_id: str) -> Path:
@@ -91,15 +131,33 @@ class CursorAdapter(Adapter):
     def detect(self) -> bool:
         return shutil.which("cursor") is not None or _cursor_dir().is_dir()
 
+    def _plan_mcp(self) -> Change:
+        path = _mcp_path()
+        old, new = edit_file(path, lambda t: _mcp_transform(t, path, install=True))
+        return Change(
+            kind="merge",
+            target=str(path),
+            description=f"Add '{constants.MCP_SERVER_NAME}' MCP server to {path}",
+            preview=diff(path, old, new) or "(already installed, no change)",
+            component="mcp",
+            _apply=lambda: apply_file_edit(path, "mcp", lambda t: _mcp_transform(t, path, install=True)),
+        )
+
     def plan_install(self, rules: bool) -> list[Change]:
-        del rules
-        return [json_change(
-            _hooks_path(),
-            "Add Cursor hooks to capture prompts, responses, tools, and stop events",
-            lambda data: _hook_transform(data, install=True),
-        )]
+        del rules  # Cursor has no global rules file
+        return [
+            self._plan_mcp(),
+            json_change(
+                _hooks_path(),
+                "Add Cursor hooks to capture prompts, responses, tools, and stop events",
+                lambda data: _hook_transform(data, install=True),
+            ),
+        ]
 
     def uninstall(self, record: ToolRecord) -> None:
+        if record.get("mcp"):
+            path = _mcp_path()
+            apply_file_edit(path, "mcp", lambda t: _mcp_transform(t, path, install=False))
         if record.get("hook"):
             change = json_change(
                 _hooks_path(),
