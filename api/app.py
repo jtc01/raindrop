@@ -177,10 +177,10 @@ def whoami() -> dict:
 
 SEARCH_TOP_K_MAX = 25
 
-CONTEXT_SNIPPET_MAX_CHARS = 200  # per "asked" snippet
-CONTEXT_DID_MAX_CHARS = 400  # per "did" snippet: start + end of the reply (see _did_snippet)
-CONTEXT_DID_HEAD_CHARS = 100
-CONTEXT_BLOCK_MAX_CHARS = 6000  # total text handed to the agent, across all lines
+CONTEXT_SNIPPET_MAX_CHARS = 600  # per "asked" snippet
+CONTEXT_DID_MAX_CHARS = 1500  # per "did" snippet: start + end of the reply (see _did_snippet)
+CONTEXT_DID_HEAD_CHARS = 400
+CONTEXT_BLOCK_MAX_CHARS = 12000  # total text handed to the agent, across all lines
 
 
 # Teammates' prompts and replies are untrusted text that lands straight in another
