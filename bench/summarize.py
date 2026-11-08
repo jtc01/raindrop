@@ -1,4 +1,4 @@
-"""Summarize bench/results/{baseline,raindrop}/*.json into a comparison table.
+"""Summarize ~/raindrop-bench/results/{baseline,raindrop}/*.json into a comparison table.
 
 Tokens = input + cache_creation + cache_read + output (everything the model
 processed). Cost comes from Claude Code's own total_cost_usd, which accounts for
@@ -10,7 +10,8 @@ import statistics
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent / "results"
+import os
+ROOT = Path(os.environ.get("RAINDROP_BENCH_HOME", Path.home() / "raindrop-bench")) / "results"
 
 
 def load(cond):

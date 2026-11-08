@@ -143,7 +143,7 @@ def tool(monkeypatch):
 def test_no_filters_searches_the_whole_team_as_before(tool):
     text = tool["call"]()
     c = tool["calls"][0]
-    assert (c["team_id"], c["top_k"], c["agent_ids"], c["since_ts"], c["file_contains"]) == ("t1", 8, None, None, None)
+    assert (c["team_id"], c["top_k"], c["agent_ids"], c["since_ts"], c["file_contains"]) == ("t1", 5, None, None, None)
     assert '- Ann (1970-01-01 00:00 UTC): "q" → "a" [files: a.py] [id: s1:3]' in text
 
 

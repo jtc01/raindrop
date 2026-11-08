@@ -58,3 +58,12 @@ def test_size_cap_still_applies_to_entries():
     entries = [l for l in text.splitlines() if l.startswith("- ")]
     assert 1 < len(entries) < 100
     assert sum(len(l) + 1 for l in entries) <= app.CONTEXT_BLOCK_MAX_CHARS
+
+
+def test_did_snippet_keeps_the_conclusion_of_a_long_reply():
+    import app as api
+    reply = "I'll start by reading the search module. " + "x " * 400 + "Result: score = 0.8*similarity + 0.2*recency."
+    out = api._did_snippet(reply)
+    assert len(out) <= api.CONTEXT_DID_MAX_CHARS + 3
+    assert out.startswith("I'll start") and out.endswith("0.8*similarity + 0.2*recency.")
+    assert api._did_snippet("short reply") == "short reply"

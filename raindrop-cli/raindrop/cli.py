@@ -358,6 +358,31 @@ def leave(yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation
     typer.secho(f"Left team '{team}' and removed {config.CONFIG_PATH}.", fg="green")
 
 
+@app.command("disband")
+def disband(yes: bool = typer.Option(False, "--yes", "-y", help="Skip typing the team name.")):
+    """(Team lead) Permanently disband your team: deletes all shared context and revokes everyone's key."""
+    cfg = _require_config()
+    team = cfg.get("team_name") or ""
+    typer.secho("This permanently deletes everything your team has shared and revokes every "
+                "teammate's key. It cannot be undone.", fg="red", bold=True)
+    if yes and team:
+        confirm = team
+    else:
+        confirm = typer.prompt(f"Type the team name{f' ({team})' if team else ''} to confirm")
+        if team and confirm.strip() != team:
+            typer.secho("Name didn't match. Nothing was changed.", fg="yellow", err=True)
+            raise typer.Exit(1)
+    try:
+        r = api_client.disband(cfg["api_url"], cfg["api_key"], confirm.strip())
+    except api_client.ApiError as e:
+        _fail(e)
+    config.delete()
+    typer.secho(f"Disbanded '{r.get('team_name') or team}': {r.get('keys_revoked', 0)} keys revoked, "
+                f"{r.get('exchanges_deleted', 0)} shared exchanges deleted.", fg="green")
+    typer.echo(f"Removed {config.CONFIG_PATH}. Teammates' keys may keep working for up to a minute "
+               "while server caches expire. Run `raindrop tools remove <tool>` to uninstall hooks.")
+
+
 @app.command("doctor")
 def doctor():
     """Check your Raindrop setup and explain anything that's broken."""
@@ -474,7 +499,7 @@ def _sharing_summary(cfg: dict) -> str:
 # listed here still shows up (under "More"), so new commands never go missing.
 HELP_SECTIONS: list[tuple[str, list[str]]] = [
     ("Get started", ["create-team", "join", "tools", "doctor"]),
-    ("Your team", ["teammates", "invite", "codes", "remove", "leave"]),
+    ("Your team", ["teammates", "invite", "codes", "remove", "leave", "disband"]),
     ("Sharing and privacy", ["share", "unshare", "pause", "resume"]),
     ("Your account", ["whoami", "rotate-key"]),
 ]

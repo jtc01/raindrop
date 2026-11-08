@@ -98,3 +98,8 @@ def revoke_code(api_url: str, api_key: str, code: str | None = None, code_id: st
 def join(api_url: str, code: str, display_name: str, focus: str, **kw) -> dict:
     """POST /join. Returns team_id, team_name, agent_id, api_key (shown once)."""
     return _post(api_url, "/join", {"code": code, "display_name": display_name, "focus": focus}, **kw)
+
+
+def disband(api_url: str, api_key: str, confirm: str, **kw) -> dict:
+    """POST /disband (authed, lead only). Deletes the team's shared context and revokes every key."""
+    return _post(api_url, "/disband", {"confirm": confirm}, api_key=api_key, **kw)
