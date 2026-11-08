@@ -201,6 +201,16 @@
   font-variant-numeric: tabular-nums;
 }
 
+.model {
+  padding: 1px 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: 4px;
+}
+
 .card h2 {
   font-size: 16px;
   font-weight: 500;

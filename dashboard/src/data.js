@@ -21,6 +21,7 @@ export const exchanges = [
     reply:
       "Added a button beside the password field that switches the input between password and text. The label flips between Show and Hide, and the button stays keyboard-focusable.",
     files: ["src/Login.tsx", "src/Login.css"],
+    model: "claude-sonnet-4-5",
   },
   {
     id: "ex_02",
@@ -30,6 +31,7 @@ export const exchanges = [
     reply:
       "The create-team route now stores sha256 of the 8-character join code in DynamoDB. The plaintext code is returned once in the response and is not written to the table.",
     files: ["api/teams.py"],
+    model: "claude-sonnet-4-5",
   },
   {
     id: "ex_03",
@@ -39,6 +41,7 @@ export const exchanges = [
     reply:
       "Auth middleware hashes the bearer token and looks it up in cache, then DynamoDB. A match attaches team_id and agent_id to the request. Anything else returns 401 before a tool runs.",
     files: ["api/auth.py", "api/mcp.py"],
+    model: "claude-opus-4-5",
   },
   {
     id: "ex_04",

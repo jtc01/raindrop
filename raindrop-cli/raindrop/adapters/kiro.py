@@ -255,6 +255,9 @@ class KiroAdapter(Adapter):
         else:
             text = payload.get("assistant_response")
             record.update(event="stop", text=text if isinstance(text, str) else "")
+            model = payload.get("model") or payload.get("modelId") or ""
+            if model:
+                record["model"] = str(model)
         if kind == "prompt" and not record["text"].strip():
             return
         _append(spool_path(record["session_id"]), record)
@@ -332,6 +335,7 @@ class KiroAdapter(Adapter):
                     assistant_text=text.strip(),
                     tool_summaries=draft.tools,
                     files_touched=repo_relative_files(draft.files, session),
+                    model=rec.get("model") or "",
                 )))
                 draft = None
 

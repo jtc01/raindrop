@@ -42,6 +42,7 @@ class Exchange:
     assistant_text: str  # final text only: no thinking, no tool output
     tool_summaries: list[str] = field(default_factory=list)  # e.g. "Edit src/app.py"
     files_touched: list[str] = field(default_factory=list)  # deduped, first-seen order
+    model: str = ""  # model name, e.g. "claude-sonnet-4-5" or "Auto"
 
     @property
     def id(self) -> str:
@@ -71,6 +72,7 @@ class ExchangeWire(TypedDict):
     assistant_text: str
     tool_summaries: list[str]
     files_touched: list[str]
+    model: str  # optional; empty string if not captured
 
 
 class PushMessagesRequest(TypedDict):

@@ -169,6 +169,7 @@ def ingest_exchanges(identity: dict[str, Any], exchanges: list[dict[str, Any]]) 
             "assistant_text": exchange["assistant_text"],
             "tool_summaries": exchange.get("tool_summaries", []),
             "files_touched": exchange.get("files_touched", []),
+            "model": exchange.get("model", ""),
             "team_id": team_id,
             "agent_id": agent_id,
             "display_name": display_name,

@@ -193,6 +193,9 @@ function Feed({ data, onDisconnect }) {
                       <header className="card-meta">
                         <span className="name">{person.name}</span>
                         <span className="focus">{person.focus}</span>
+                        {exchange.model && (
+                          <span className="model">{exchange.model}</span>
+                        )}
                         <time dateTime={new Date(exchange.ts).toISOString()}>
                           {formatAgo(exchange.ts, now)}
                         </time>

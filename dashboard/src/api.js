@@ -60,6 +60,7 @@ export async function fetchFeed({ apiUrl, apiKey }) {
     prompt: e.user_text ?? "",
     reply: e.assistant_text ?? "",
     files: e.files_touched ?? [],
+    model: e.model ?? "",
   })
 
   return {

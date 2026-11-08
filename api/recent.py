@@ -85,6 +85,7 @@ def _hydrate(s3, key: str) -> Optional[dict[str, Any]]:
         "files_touched": exchange.get("files_touched", []),
         "user_text": exchange.get("user_text"),
         "assistant_text": exchange.get("assistant_text"),
+        "model": exchange.get("model", ""),
     }
 
 
