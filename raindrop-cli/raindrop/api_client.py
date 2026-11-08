@@ -103,3 +103,8 @@ def join(api_url: str, code: str, display_name: str, focus: str, **kw) -> dict:
 def disband(api_url: str, api_key: str, confirm: str, **kw) -> dict:
     """POST /disband (authed, lead only). Deletes the team's shared context and revokes every key."""
     return _post(api_url, "/disband", {"confirm": confirm}, api_key=api_key, **kw)
+
+
+def clear_history(api_url: str, api_key: str, **kw) -> dict:
+    """POST /clear-history (authed, lead only). Deletes all shared context; team and keys stay."""
+    return _post(api_url, "/clear-history", {"confirm": "clear"}, api_key=api_key, **kw)

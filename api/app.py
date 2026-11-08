@@ -642,6 +642,43 @@ def _query_team(table, team_id: str) -> list[dict]:
         kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
 
 
+@mcp.custom_route("/clear-history", methods=["POST"])
+async def clear_history(request: Request) -> JSONResponse:
+    """Authed, lead only. Body: {confirm: "clear"}. Deletes all of the team's shared
+    context (S3 exchanges + their search vectors) but keeps the team, its members, and
+    their keys. Use /disband instead to end the team entirely. Cannot be undone."""
+    ident = request.state.raindrop
+    try:
+        body = await request.json()
+    except Exception:
+        return error(400, "bad_request", "Body must be JSON.")
+    confirm = body.get("confirm") if isinstance(body, dict) else None
+
+    def work():
+        team_id = ident["team_id"]
+        if team_lead(team_id, list_team_members(team_id)) != ident["agent_id"]:
+            return error(403, "not_lead", "Only the team lead can clear shared history.")
+        if confirm != "clear":
+            return error(400, "confirm_mismatch", 'Send {"confirm": "clear"} to clear shared history.')
+
+        s3_keys, vector_keys = [], []
+        for page in _s3.get_paginator("list_objects_v2").paginate(
+                Bucket=EXCHANGES_BUCKET, Prefix=f"teams/{team_id}/"):
+            for obj in page.get("Contents", []):
+                s3_keys.append(obj["Key"])
+                parts = obj["Key"].split("/")
+                if len(parts) == 7 and parts[6].endswith(".json"):
+                    vector_keys.append(f"{parts[5]}:{parts[6][:-5]}")
+        if vector_keys:
+            vector_store.delete_vectors(vector_keys)
+        for i in range(0, len(s3_keys), 1000):
+            _s3.delete_objects(Bucket=EXCHANGES_BUCKET, Delete={
+                "Objects": [{"Key": k} for k in s3_keys[i:i + 1000]], "Quiet": True})
+        return JSONResponse({"cleared": True, "team_id": team_id, "exchanges_deleted": len(s3_keys)})
+
+    return await anyio.to_thread.run_sync(work)
+
+
 @mcp.custom_route("/disband", methods=["POST"])
 async def disband(request: Request) -> JSONResponse:
     """Authed, lead only. Body: {confirm: <exact team name>}. Permanently ends the team:

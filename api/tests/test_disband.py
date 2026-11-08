@@ -91,3 +91,17 @@ def test_wrong_confirm_changes_nothing(world):
     r = call(world, "lead-key", "rain")
     assert r.status_code == 400 and r.json()["error"] == "confirm_mismatch"
     assert len(world["s3"].keys) == 3 and set(world["codes"].rows) == {"c1", "c2"}
+
+
+def test_clear_history_wipes_context_but_keeps_team_and_keys(world):
+    r = world["client"].post("/clear-history", json={"confirm": "clear"},
+                             headers={"Authorization": "Bearer lead-key"})
+    assert r.status_code == 200, r.text
+    assert r.json()["exchanges_deleted"] == 2
+    assert sorted(world["vectors"]) == ["s1:0", "s2:3"]
+    assert world["s3"].keys == {"teams/OTHER/agents/a_x/sessions/s9/0.json"}
+    assert world["teams"].rows["T"].get("status") != "disbanded"
+    assert {r["status"] for r in world["agents"].rows.values() if r["agent_id"] in ("a_lead", "a_mate")} == {"active"}
+    api._auth_cache.clear()
+    assert world["client"].post("/clear-history", json={"confirm": "clear"},
+                                headers={"Authorization": "Bearer mate-key"}).status_code == 403

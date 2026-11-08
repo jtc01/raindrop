@@ -383,6 +383,20 @@ def disband(yes: bool = typer.Option(False, "--yes", "-y", help="Skip typing the
                "while server caches expire. Run `raindrop tools remove <tool>` to uninstall hooks.")
 
 
+@app.command("clear-history")
+def clear_history(yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation.")):
+    """(Team lead) Delete all shared team context. The team and everyone's keys stay."""
+    cfg = _require_config()
+    if not yes:
+        typer.confirm("Delete all shared team context? The team and keys stay, but this "
+                      "can't be undone.", abort=True)
+    try:
+        r = api_client.clear_history(cfg["api_url"], cfg["api_key"])
+    except api_client.ApiError as e:
+        _fail(e)
+    typer.secho(f"Cleared {r.get('exchanges_deleted', 0)} shared exchanges.", fg="green")
+
+
 @app.command("doctor")
 def doctor():
     """Check your Raindrop setup and explain anything that's broken."""
@@ -499,7 +513,7 @@ def _sharing_summary(cfg: dict) -> str:
 # listed here still shows up (under "More"), so new commands never go missing.
 HELP_SECTIONS: list[tuple[str, list[str]]] = [
     ("Get started", ["create-team", "join", "tools", "doctor"]),
-    ("Your team", ["teammates", "invite", "codes", "remove", "leave", "disband"]),
+    ("Your team", ["teammates", "invite", "codes", "remove", "leave", "disband", "clear-history"]),
     ("Sharing and privacy", ["share", "unshare", "pause", "resume"]),
     ("Your account", ["whoami", "rotate-key"]),
 ]
