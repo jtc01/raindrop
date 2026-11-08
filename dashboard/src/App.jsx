@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import Markdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import * as sample from "./data.js"
 import { fetchFeed, loadConnection, saveConnection } from "./api.js"
 import "./App.css"
@@ -14,6 +15,14 @@ function formatAgo(ts, now) {
   if (hours < 24) return `${hours}h ago`
   const days = Math.round(hours / 24)
   return days === 1 ? "1d ago" : `${days}d ago`
+}
+
+const markdownComponents = {
+  table: (props) => (
+    <div className="table-wrap">
+      <table {...props} />
+    </div>
+  ),
 }
 
 function Reply({ id, text, open, onToggle }) {
@@ -36,7 +45,7 @@ function Reply({ id, text, open, onToggle }) {
   return (
     <>
       <div ref={ref} className={open ? "reply" : "reply clamped"}>
-        <Markdown>{text}</Markdown>
+        <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</Markdown>
       </div>
       {overflows && (
         <button
