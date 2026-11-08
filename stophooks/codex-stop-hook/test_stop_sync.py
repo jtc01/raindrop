@@ -269,5 +269,18 @@ class CodexStopSyncTests(unittest.TestCase):
         self.assertEqual(offset, self.transcript.stat().st_size)
 
 
+class CodexStdoutTests(unittest.TestCase):
+    def test_a_successful_stop_hook_prints_nothing_on_stdout(self) -> None:
+        # Codex reads a Stop hook's stdout as JSON and treats plain text as invalid.
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(stop_sync, "sync_stop", return_value=2),                 patch("sys.stdin", io.StringIO('{"session_id": "s"}')),                 redirect_stdout(out), redirect_stderr(err):
+            self.assertEqual(stop_sync.main(), 0)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("Raindrop synced 2 exchanges.", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

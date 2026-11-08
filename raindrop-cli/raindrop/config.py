@@ -65,12 +65,35 @@ def permissions_ok() -> bool | None:
 SHARING_MODES = ("opt_in", "all")
 DEFAULT_SHARING_MODE = "opt_in"
 
+def _main_checkout(root: Path) -> Path:
+    """A linked git worktree has a `.git` FILE pointing into the main repo's `.git/worktrees/<name>`.
+    Return the main checkout's folder for it, so worktrees count as the repo they belong to
+    (sharing `raindrop share --repo` in the main folder also covers its worktrees). Any other
+    folder is returned unchanged."""
+    dotgit = root / ".git"
+    try:
+        if not dotgit.is_file():
+            return root
+        text = dotgit.read_text(encoding="utf-8").strip()
+        if not text.startswith("gitdir:"):
+            return root
+        gitdir = (root / text[len("gitdir:"):].strip()).resolve()
+        commondir = gitdir / "commondir"
+        if gitdir.parent.name != "worktrees" or not commondir.is_file():
+            return root  # a submodule or something else, not a linked worktree
+        common = (gitdir / commondir.read_text(encoding="utf-8").strip()).resolve()
+        return common.parent if common.name == ".git" else root
+    except (OSError, ValueError):
+        return root
+
+
 def repo_root(path: str | os.PathLike | None = None) -> Path:
-    """The git repo containing `path` (default: cwd), or the path itself if not in a repo."""
+    """The git repo containing `path` (default: cwd), or the path itself if not in a repo.
+    A linked worktree resolves to its main checkout."""
     start = Path(path or Path.cwd()).resolve()
     for p in (start, *start.parents):
         if (p / ".git").exists():
-            return p
+            return _main_checkout(p)
     return start
 
 
