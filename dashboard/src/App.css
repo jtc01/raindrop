@@ -214,6 +214,56 @@
   max-width: 68ch;
 }
 
+.reply > :first-child {
+  margin-top: 0;
+}
+
+.reply > :last-child {
+  margin-bottom: 0;
+}
+
+.reply p,
+.reply ul,
+.reply ol,
+.reply pre,
+.reply blockquote {
+  margin: 8px 0;
+}
+
+.reply ul,
+.reply ol {
+  padding-left: 20px;
+}
+
+.reply code {
+  padding: 1px 4px;
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: var(--panel);
+  border-radius: 3px;
+}
+
+.reply pre {
+  padding: 10px 12px;
+  overflow-x: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.reply pre code {
+  padding: 0;
+  background: none;
+}
+
+.reply a {
+  color: var(--accent);
+}
+
+.reply.clamped pre {
+  overflow: hidden;
+}
+
 .reply.clamped {
   display: -webkit-box;
   -webkit-line-clamp: 2;

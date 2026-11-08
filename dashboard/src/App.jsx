@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import Markdown from "react-markdown"
 import * as sample from "./data.js"
 import { fetchFeed, loadConnection, saveConnection } from "./api.js"
 import "./App.css"
@@ -34,9 +35,9 @@ function Reply({ id, text, open, onToggle }) {
 
   return (
     <>
-      <p ref={ref} className={open ? "reply" : "reply clamped"}>
-        {text}
-      </p>
+      <div ref={ref} className={open ? "reply" : "reply clamped"}>
+        <Markdown>{text}</Markdown>
+      </div>
       {overflows && (
         <button
           type="button"

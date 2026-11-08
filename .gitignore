@@ -442,3 +442,6 @@ $RECYCLE.BIN/
 .
 bench/results/
 _to_delete/
+
+# SAM build venv (Python 3.12)
+.venv-sam/
