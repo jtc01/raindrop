@@ -175,7 +175,7 @@ CONTEXT_BLOCK_MAX_CHARS = 6000  # total text handed to the agent, across all lin
 
 
 def _snippet(text: str | None, limit: int = CONTEXT_SNIPPET_MAX_CHARS) -> str:
-    text = (text or "").strip()
+    text = " ".join((text or "").split())  # one line per exchange: fold newlines and runs of spaces
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
