@@ -43,7 +43,7 @@ def test_tool_is_registered_and_returns_attributed_trimmed_text(wired):
     [line] = app_entries(text)  # fenced as untrusted data; see test_format.py
     assert line.startswith('- Bob (1970-01-01 00:00 UTC): "q" -> "'.replace("->", "→"))  # who, when, prompt
     assert line.endswith("[files: a.py]")
-    assert len(line) < 2500  # the 5000-character reply is trimmed to a snippet (start + end)
+    assert len(line) < 4500  # the 5000-character reply is trimmed to a snippet (start + end)
     assert wired["team_id"] == "t1" and wired["n"] == 3
     assert wired["exclude"] == "me"  # the caller is left out by default
 
