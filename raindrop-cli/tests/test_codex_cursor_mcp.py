@@ -44,7 +44,7 @@ def test_cursor_mcp_is_added_beside_other_servers_and_removed_cleanly(home):
     CursorAdapter().uninstall(status.to_tool_record())
     data = json.loads(path.read_text())
     assert data["mcpServers"] == {"playwright": other} and data["keep"] == 1
-    assert "raindrop sync" not in (home / ".cursor" / "hooks.json").read_text()
+    assert "sync --tool cursor" not in (home / ".cursor" / "hooks.json").read_text()
 
 
 def test_cursor_mcp_is_created_from_scratch(home):
@@ -93,7 +93,7 @@ def test_codex_mcp_edits_only_our_table_and_the_file_still_parses(home):
 
     CodexAdapter().uninstall(status.to_tool_record())
     assert path.read_text(encoding="utf-8").strip() == ORIGINAL.strip()
-    assert "raindrop sync" not in (home / ".codex" / "hooks.json").read_text()
+    assert "sync --tool codex" not in (home / ".codex" / "hooks.json").read_text()
 
 
 def test_codex_replaces_a_stale_table_wherever_it_sits(home):

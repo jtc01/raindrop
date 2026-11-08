@@ -224,7 +224,9 @@ class CursorAdapterTests(unittest.TestCase):
         self.assertEqual(data["hooks"]["stop"][0]["command"], "echo keep")
         for event in ("beforeSubmitPrompt", "postToolUse", "afterAgentResponse", "stop"):
             self.assertEqual(
-                sum("raindrop sync --tool cursor" in hook["command"]
+                # "sync --tool cursor" is the marker; the program before it is a bare name or a full
+                # path depending on whether `raindrop` is on this machine's PATH.
+                sum("sync --tool cursor" in hook["command"]
                     for hook in data["hooks"][event]),
                 1,
             )

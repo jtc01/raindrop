@@ -104,7 +104,6 @@ Cursor reloaded the hooks configuration.
    A failure prints an error. Do not treat the hook as verified until you can
    see the exchange in the team's available viewer/dashboard.
 
-Cursor's diagnostic hook is not a Cursor sync implementation. Do not expect
-Cursor conversations to appear in Raindrop yet. The Cursor adapter is a
-testable prototype; it is registered in the CLI but still needs real hook-payload
-validation before live sync can be tested.
+`capture.py` is only the diagnostic. Cursor syncs through `raindrop tools add cursor` or
+`cursor-stop-hook/cursor_stop_sync.py`; that path has been checked against Cursor's hooks
+documentation but not yet against a real Cursor session.

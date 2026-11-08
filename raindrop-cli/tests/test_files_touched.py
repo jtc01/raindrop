@@ -237,5 +237,6 @@ def test_cursor_adapter_normalizes(repo, monkeypatch):
     adapter.capture({**base, "hook_event_name": "postToolUse", "tool_name": "read_file",
                      "tool_input": {"path": str(repo.parent / ".cursor" / "x.json")}})
     adapter.capture({**base, "hook_event_name": "afterAgentResponse", "text": "done"})
+    adapter.capture({**base, "hook_event_name": "stop", "status": "completed"})  # a turn closes at stop
     [ex] = adapter.read_new(SessionRef("conv", None, str(repo / "raindrop-cli")), 0).exchanges
     assert ex.files_touched == ["raindrop-cli/raindrop/cli.py"]

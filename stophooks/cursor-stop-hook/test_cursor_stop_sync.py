@@ -51,23 +51,36 @@ class CursorStopSyncTests(unittest.TestCase):
         return {"hook_event_name": name, "conversation_id": CID,
                 "workspace_roots": [str(self.home)], **kw}
 
-    def test_turn_is_redacted_and_uploaded_once_the_reply_arrives(self) -> None:
+    def test_turn_is_redacted_and_uploaded_at_stop_with_the_last_reply(self) -> None:
         sync = lambda p: hook.sync_event(p, self.transport)  # noqa: E731
         self.assertEqual(sync(self.event("beforeSubmitPrompt", prompt=f"use {LEAK} and {KEY}")), 0)
+        # Cursor may reply before each tool call, so a reply does not end the turn.
+        self.assertEqual(sync(self.event("afterAgentResponse", text="Let me look at the code first.")), 0)
         self.assertEqual(sync(self.event("postToolUse", tool_name="Edit",
                                          tool_input={"file_path": str(self.home / "src" / "a.py")})), 0)
-        self.assertEqual(self.sent, [])  # nothing leaves the machine before there is a reply
+        self.assertEqual(sync(self.event("afterAgentResponse", text="Fixed it.")), 0)
+        self.assertEqual(self.sent, [])  # nothing leaves the machine until the turn is over
 
-        # The adapter treats a turn as finished when the reply arrives; `stop` adds nothing.
-        self.assertEqual(sync(self.event("afterAgentResponse", text="Fixed it.")), 1)
-        self.assertEqual(sync(self.event("stop", status="completed", loop_count=0)), 0)
+        self.assertEqual(sync(self.event("stop", status="completed", loop_count=0)), 1)
         blob = json.dumps(self.sent)
         self.assertNotIn(LEAK, blob)
         self.assertNotIn(KEY, blob)
         exchange = self.sent[0]["exchanges"][0]
         self.assertEqual(exchange["session_id"], CID)  # ids survive redaction
-        self.assertEqual(exchange["assistant_text"], "Fixed it.")
+        self.assertEqual(exchange["assistant_text"], "Fixed it.")  # the last reply, not the first
         self.assertEqual(exchange["files_touched"], ["src/a.py"])
+        self.assertEqual(sync(self.event("stop", status="completed", loop_count=1)), 0)  # nothing is sent twice
+
+    def test_a_turn_whose_stop_never_fired_is_uploaded_when_the_next_prompt_starts(self) -> None:
+        sync = lambda p: hook.sync_event(p, self.transport)  # noqa: E731
+        sync(self.event("beforeSubmitPrompt", prompt="first question"))
+        sync(self.event("afterAgentResponse", text="first answer"))
+        self.assertEqual(self.sent, [])
+        self.assertEqual(sync(self.event("beforeSubmitPrompt", prompt="second question")), 1)  # first turn, now closed
+        self.assertEqual(self.sent[0]["exchanges"][0]["user_text"], "first question")
+        self.assertEqual(sync(self.event("afterAgentResponse", text="second answer")), 0)  # the second is still open
+        self.assertEqual(sync(self.event("stop", status="completed", loop_count=0)), 1)
+        self.assertEqual(self.sent[1]["exchanges"][0]["user_text"], "second question")
 
     def run_main(self, stdin: str) -> tuple[int, str]:
         out = io.StringIO()
