@@ -86,6 +86,20 @@ def put_vectors_batch(items: Sequence[tuple[str, Sequence[float], dict[str, Any]
 GET_VECTORS_BATCH_LIMIT = 100
 
 
+DELETE_VECTORS_BATCH_LIMIT = 500
+
+
+def delete_vectors(keys: Sequence[str]) -> None:
+    """Delete vectors by key (missing keys are ignored by S3 Vectors). Used by /disband."""
+    keys = list(keys)
+    for start in range(0, len(keys), DELETE_VECTORS_BATCH_LIMIT):
+        _s3vectors.delete_vectors(
+            vectorBucketName=VECTOR_BUCKET_NAME,
+            indexName=VECTOR_INDEX_NAME,
+            keys=keys[start : start + DELETE_VECTORS_BATCH_LIMIT],
+        )
+
+
 def existing_vector_keys(keys: Sequence[str]) -> set[str]:
     """Which of `keys` currently exist in the index (metadata/data not fetched).
     Used by scripts/backfill_vectors.py to find exchanges that are in S3 but

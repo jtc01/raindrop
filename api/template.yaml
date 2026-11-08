@@ -115,7 +115,7 @@ Resources:
           VECTOR_BUCKET_NAME: !Sub raindrop-vectors-${AWS::AccountId}
           VECTOR_INDEX_NAME: raindrop-exchanges
       Policies:
-        - S3WritePolicy: { BucketName: !Ref ExchangesBucket }
+        - S3CrudPolicy: { BucketName: !Ref ExchangesBucket }  # Crud: /disband deletes
         - S3ReadPolicy: { BucketName: !Ref ExchangesBucket }
         - Statement:
             - Sid: BedrockTitanEmbed
@@ -128,6 +128,7 @@ Resources:
                 - s3vectors:PutVectors
                 - s3vectors:QueryVectors
                 - s3vectors:GetVectors
+                - s3vectors:DeleteVectors
               Resource:
                 - !Sub arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/raindrop-vectors-${AWS::AccountId}
                 - !Sub arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/raindrop-vectors-${AWS::AccountId}/index/raindrop-exchanges
