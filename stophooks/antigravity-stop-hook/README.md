@@ -54,19 +54,32 @@ it wastes a request). `raindrop tools remove antigravity` removes the CLI's hook
 
 ## What was verified, and what wasn't
 
-- The transcript parser was checked against a real Antigravity transcript (record
-  shapes, prompt wrapper, reply and tool steps).
-- The hook configuration format comes from Antigravity's hooks documentation and
-  has not been run inside Antigravity. Check `/hooks` in the `agy` CLI, or
-  **Customizations > Hooks** in the IDE, to confirm it loads.
-- The docs are unclear on whether `transcriptPath` is the transcript file or the
-  conversation folder, so the adapter accepts either and falls back to the known
-  location under `~/.gemini/antigravity*/brain/`.
-- A user report on Google's developer forum says hooks in plugins did not fire in
-  IDE 2.1.1 but did in the CLI. If nothing syncs from the IDE, that is the first
-  thing to check.
-- If the agent is still running background tasks when it stops, the final text of
-  that turn may arrive after the sync. It would be missed.
+Verified in the real `agy` CLI (Antigravity's own log shows it loading and running the hook, and
+the script ran on the real payload):
+
+- **The hook file format.** A `~/.gemini/config/hooks.json` shaped `{"<name>": {"Stop": [{"type":
+  "command", "command": ..., "timeout": ...}]}}` is loaded ("loaded 1 named hooks").
+- **The Stop payload.** Fields are `conversationId`, `transcriptPath`, `workspacePaths`,
+  `lastUserInput`, `modelName`, `terminationReason` (`NO_TOOL_CALL` for a plain reply),
+  `executionNum`, `fullyIdle`, `error` and `artifactDirectoryPath`.
+- **`transcriptPath` is a file**, and the one Antigravity sends is
+  `.../brain/<conversationId>/.system_generated/logs/transcript_full.jsonl` (not `transcript.jsonl`).
+  Both have the same record shape. The adapter accepts the file, the conversation folder, or finds it
+  by `conversationId`.
+- **The answer.** The script printed `{"decision": "allow"}`, exited 0, and one real `pong` turn became
+  exactly one exchange (prompt `pong`, the reply, no tools).
+
+Things to know:
+
+- **Antigravity splits the command on spaces and does not process quotes.** A quoted path reaches the
+  program with the quote characters still in it (this broke my first test hook), and the command runs
+  from `~/.gemini/config`. So a program path containing a space cannot work. On Windows the installer
+  uses the 8.3 short form of the path when it has a space; elsewhere install the CLI somewhere
+  without spaces in the path.
+- **IDE not tested.** This was the `agy` CLI. A user report on Google's developer forum says hooks in
+  plugins did not fire in IDE 2.1.1 but did in the CLI. If nothing syncs from the IDE, check that first.
+- If the agent is still running background tasks when it stops (`fullyIdle` is false), the final text of
+  that turn may arrive after the sync and would be missed.
 
 ## Requirements
 

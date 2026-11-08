@@ -156,3 +156,24 @@ def test_stop_hook_always_answers_allow_on_stdout_even_when_sync_fails(env):
 def test_other_tools_print_nothing_on_stdout(env):
     r = runner.invoke(cli.app, ["sync", "--tool", "claude-code", "--fail-open"], input="not json")
     assert r.exit_code == 0 and r.stdout.strip() == ""
+
+
+# ---- the installed command must survive Antigravity's command splitting -----------------
+
+def test_hook_command_has_no_quotes_because_antigravity_passes_them_through(env, monkeypatch):
+    from raindrop.adapters import antigravity
+    a = AntigravityAdapter()
+    monkeypatch.setattr(antigravity, "exe", lambda: "C:/Users/Jo Smith/venv/Scripts/raindrop.EXE")
+    monkeypatch.setattr(antigravity, "_short_path", lambda p: "C:/Users/JOSMIT~1/venv/Scripts/raindrop.EXE")
+    cmd = a.hook_command()
+    assert cmd == "C:/Users/JOSMIT~1/venv/Scripts/raindrop.EXE sync --tool antigravity --fail-open"
+    assert '"' not in cmd and len(cmd.split()) == 5  # splitting on spaces gives program + 4 arguments
+
+    monkeypatch.setattr(antigravity, "exe", lambda: "C:/Users/me/venv/Scripts/raindrop.EXE")
+    assert a.hook_command().startswith("C:/Users/me/venv/Scripts/raindrop.EXE sync")  # no space: untouched
+
+
+def test_short_path_is_left_alone_when_there_is_none(monkeypatch):
+    from raindrop.adapters import antigravity
+    monkeypatch.setattr(antigravity.sys, "platform", "linux")
+    assert antigravity._short_path("/home/jo smith/bin/raindrop") == "/home/jo smith/bin/raindrop"

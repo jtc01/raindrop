@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -61,6 +62,24 @@ _TRANSCRIPT_REL = Path(".system_generated") / "logs" / "transcript.jsonl"
 
 def gemini_dir() -> Path:
     return Path.home() / ".gemini"
+
+
+def _short_path(path: str) -> str:
+    """The Windows 8.3 short form of `path`, or `path` unchanged if there isn't one."""
+    if sys.platform != "win32":
+        return path
+    try:
+        import ctypes
+
+        buf = ctypes.create_unicode_buffer(32768)
+        n = ctypes.windll.kernel32.GetShortPathNameW(path, buf, len(buf))
+        return buf.value.replace("\\", "/") if 0 < n < len(buf) else path
+    except Exception:
+        return path
+
+
+def _no_space_path(path: str) -> str:
+    return _short_path(path) if any(c.isspace() for c in path) else path
 
 
 def _uri_to_path(uri: str) -> str:
@@ -160,7 +179,10 @@ class AntigravityAdapter(FileConfigAdapter):
         return gemini_dir() / "config" / "hooks.json"
 
     def hook_command(self) -> str:
-        return f"{quote_cmd(exe())} sync --tool antigravity --fail-open"
+        # Antigravity splits the command on spaces and passes quote characters through
+        # untouched, so a quoted program path ("C:/Jo Smith/...") cannot work. Use the
+        # space-free short form of the path when there is one.
+        return f"{quote_cmd(_no_space_path(exe()))} sync --tool antigravity --fail-open"
 
     def _add_hook(self, text: str, path: Path) -> str:
         data = load_json_text(text, path)

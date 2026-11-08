@@ -1,8 +1,16 @@
-"""Codex adapter: reads Codex transcripts via its Stop hook."""
+"""Codex adapter: reads Codex transcripts via its Stop hook.
+
+Install side:
+  - MCP:  a `[mcp_servers.raindrop]` table in ~/.codex/config.toml, so Codex can read
+          team context. Only that table is touched; the rest of the file is kept.
+  - Hook: a Stop hook in ~/.codex/hooks.json running `raindrop sync --tool codex`.
+  Codex has no global rules file we manage, so `--rules` is ignored.
+"""
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import time
@@ -10,7 +18,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from raindrop.adapters._common import json_change, repo_relative_files, validate_session_id, newest_session_in_repo, jsonl_head
+from raindrop import constants
+from raindrop.adapters._common import (
+    apply_file_edit,
+    diff,
+    edit_file,
+    exe,
+    json_change,
+    jsonl_head,
+    newest_session_in_repo,
+    repo_relative_files,
+    validate_session_id,
+)
 from raindrop.adapters.base import Adapter, Change, SessionRef
 from raindrop.errors import TranscriptError
 from raindrop.models import Cursor, Exchange, ReadResult, ToolRecord
@@ -29,6 +48,55 @@ def _hooks_path() -> Path:
 
 def _session_root() -> Path:
     return _codex_dir() / "sessions"
+
+
+def _mcp_path() -> Path:
+    return _codex_dir() / "config.toml"
+
+
+# ---- ~/.codex/config.toml: our MCP table only -------------------------------------------
+# No TOML writer is available (tomllib only reads), so edit the text: drop our own table,
+# and append a fresh one. Every other line is left exactly as it was.
+
+_TABLE_HEADER = re.compile(r"^\s*\[{1,2}\s*([^\[\]]+?)\s*\]{1,2}\s*(#.*)?$")
+_OUR_TABLE = f"mcp_servers.{constants.MCP_SERVER_NAME}"
+
+
+def _toml_str(value: str) -> str:
+    """A TOML string. Literal strings take backslashes (Windows paths) as they are."""
+    if "'" not in value and "\n" not in value:
+        return f"'{value}'"
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _is_ours(header: str) -> bool:
+    name = header.replace('"', "").replace("'", "").replace(" ", "")
+    return name == _OUR_TABLE or name.startswith(_OUR_TABLE + ".")
+
+
+def _mcp_block() -> str:
+    home = os.environ.get("RAINDROP_HOME") or str(constants.raindrop_home())
+    return (
+        f"[{_OUR_TABLE}]\n"
+        f"command = {_toml_str(exe())}\n"
+        'args = ["proxy"]\n'
+        f"env = {{ RAINDROP_HOME = {_toml_str(home)} }}\n"
+    )
+
+
+def _mcp_transform(text: str, install: bool) -> str:
+    kept: list[str] = []
+    skipping = False
+    for line in text.replace("\r\n", "\n").split("\n"):
+        m = _TABLE_HEADER.match(line)
+        if m:
+            skipping = _is_ours(m.group(1))
+        if not skipping:
+            kept.append(line)
+    rest = "\n".join(kept).rstrip()
+    if not install:
+        return rest + "\n" if rest else ""
+    return (rest + "\n\n" if rest else "") + _mcp_block()
 
 
 def _hook_transform(data: dict, install: bool) -> dict:
@@ -156,16 +224,33 @@ class CodexAdapter(Adapter):
     def detect(self) -> bool:
         return shutil.which("codex") is not None or _codex_dir().is_dir()
 
+    def _plan_mcp(self) -> Change:
+        path = _mcp_path()
+        old, new = edit_file(path, lambda t: _mcp_transform(t, install=True))
+        return Change(
+            kind="merge",
+            target=str(path),
+            description=f"Add '{constants.MCP_SERVER_NAME}' MCP server to {path}",
+            preview=diff(path, old, new) or "(already installed, no change)",
+            component="mcp",
+            _apply=lambda: apply_file_edit(path, "mcp", lambda t: _mcp_transform(t, install=True)),
+        )
+
     def plan_install(self, rules: bool) -> list[Change]:
-        del rules
-        path = _hooks_path()
-        return [json_change(
-            path,
-            "Add a Codex Stop hook for Raindrop sync",
-            lambda data: _hook_transform(data, install=True),
-        )]
+        del rules  # no global rules file
+        return [
+            self._plan_mcp(),
+            json_change(
+                _hooks_path(),
+                "Add a Codex Stop hook for Raindrop sync",
+                lambda data: _hook_transform(data, install=True),
+            ),
+        ]
 
     def uninstall(self, record: ToolRecord) -> None:
+        if record.get("mcp"):
+            path = _mcp_path()
+            apply_file_edit(path, "mcp", lambda t: _mcp_transform(t, install=False))
         if record.get("hook"):
             path = _hooks_path()
             change = json_change(

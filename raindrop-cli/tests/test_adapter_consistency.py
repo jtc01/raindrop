@@ -66,16 +66,7 @@ def test_install_is_idempotent_and_syncs_this_tool(home, name):
     assert any(is_our_hook_command(line) for line in new_text.splitlines() if "sync" in line)
 
 
-# Known gap: these two install a hook (the tool can share) but no MCP server (it can't read the
-# team's context). strict=True so that fixing it makes this xfail an error, prompting its removal.
-NO_MCP_YET = {"codex", "cursor"}
-
-
-@pytest.mark.parametrize("name", [
-    pytest.param(n, marks=pytest.mark.xfail(strict=True, reason="adapter doesn't register the MCP server yet"))
-    if n in NO_MCP_YET else n
-    for n in NAMES
-])
+@pytest.mark.parametrize("name", NAMES)
 def test_install_registers_the_mcp_server_so_the_tool_can_read_team_context(home, name):
     a = registry.get_adapter(name)
     status = a.apply(a.plan_install(rules=False))

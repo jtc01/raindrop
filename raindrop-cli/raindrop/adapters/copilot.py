@@ -231,7 +231,7 @@ class CopilotAdapter(FileConfigAdapter):
             p = Path(raw).expanduser()
             if p.is_file():
                 return p
-        # Not given, or stale: look where VS Code keeps transcripts.
+        # Not given, or stale: look where VS Code keeps transcripts, then Copilot's own store.
         for user_dir in _vscode_user_dirs():
             matches = sorted(
                 (user_dir / "workspaceStorage").glob(
@@ -240,7 +240,10 @@ class CopilotAdapter(FileConfigAdapter):
             )
             if matches:
                 return matches[0]
-        return None
+        # Copilot's own engine (the CLI, and chat sessions it runs for VS Code) keeps its
+        # sessions here, in the same event style.
+        own = copilot_dir() / "session-state" / session_id / "events.jsonl"
+        return own if own.is_file() else None
 
     def read_new(self, session: SessionRef, cursor: Cursor) -> ReadResult:
         path = session.transcript_path

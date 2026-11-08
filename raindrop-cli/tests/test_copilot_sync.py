@@ -158,3 +158,38 @@ def test_sync_redacts_and_uploads_once(env):
 
 def test_copilot_prints_nothing_on_stdout_for_the_hook(env):
     assert CopilotAdapter().hook_stdout() is None
+
+
+# ---- Copilot's own session store (~/.copilot/session-state/<id>/events.jsonl) -----------
+
+def hook_event(kind, hook_type, **data):
+    return ev(kind, hookInvocationId="h", hookType=hook_type, **data)
+
+
+def test_transcript_is_found_in_copilots_own_session_store(env):
+    d = env / ".copilot" / "session-state" / SID
+    d.mkdir(parents=True)
+    (d / "events.jsonl").write_bytes("".join(json.dumps(e) + chr(10) for e in [
+        START, hook_event("hook.start", "userPromptSubmitted", input={"prompt": "q"}),
+        hook_event("hook.end", "userPromptSubmitted", success=True, output={"additionalContext": "x"}),
+        user("q"), ev("system.message", role="system", content="long system prompt"),
+        ev("assistant.turn_start", turnId="0"), reply("a"), ev("assistant.turn_end", turnId="0"),
+    ]).encode())
+    a = CopilotAdapter()
+    s = a.session_from_hook({"sessionId": SID})  # no path given and not in VS Code's folder
+    assert s.transcript_path == d / "events.jsonl"
+    [e] = a.read_new(s, 0).exchanges
+    assert (e.user_text, e.assistant_text) == ("q", "a")  # hook.*, system.message events are ignored
+
+
+def test_a_turn_that_failed_before_any_reply_is_held_back_not_uploaded(env):
+    # Shape of a real session whose model call failed with "400 The requested model is not supported".
+    p = write(env, START, hook_event("hook.start", "userPromptSubmitted", input={"prompt": "q"}),
+              user("Explain what a for loop is"), ev("assistant.turn_start", turnId="0"),
+              hook_event("hook.start", "errorOccurred", input={"error": "x"}),
+              ev("assistant.turn_end", turnId="0"),
+              ev("session.error", errorType="query", message="400 The requested model is not supported.", statusCode=400))
+    res = read(p)
+    assert res.exchanges == []
+    assert res.new_cursor == len("".join(json.dumps(e) + chr(10) for e in [
+        START, hook_event("hook.start", "userPromptSubmitted", input={"prompt": "q"})]).encode())  # start of the prompt
