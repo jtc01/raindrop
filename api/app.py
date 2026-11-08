@@ -252,7 +252,7 @@ def search_team_context(query: str, top_k: int = 8) -> str:
     return _format_exchanges(results, "No relevant context found.")
 
 
-RECENT_N_MAX = 25
+RECENT_N_MAX = 50
 
 
 @mcp.tool
