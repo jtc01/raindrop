@@ -44,7 +44,6 @@ from raindrop.adapters._common import (
     edit_file,
     exe,
     load_json_text,
-    quote_cmd,
 )
 from raindrop.adapters._file_config import FileConfigAdapter
 from raindrop.adapters.base import Change, SessionRef
@@ -182,7 +181,9 @@ class AntigravityAdapter(FileConfigAdapter):
         # Antigravity splits the command on spaces and passes quote characters through
         # untouched, so a quoted program path ("C:/Jo Smith/...") cannot work. Use the
         # space-free short form of the path when there is one.
-        return f"{quote_cmd(_no_space_path(exe()))} sync --tool antigravity --fail-open"
+        # So no quoting at all, on any OS (shell quoting would add literal quotes).
+        prog = _no_space_path(exe()).replace("\\", "/")
+        return f"{prog} sync --tool antigravity --fail-open"
 
     def _add_hook(self, text: str, path: Path) -> str:
         data = load_json_text(text, path)
