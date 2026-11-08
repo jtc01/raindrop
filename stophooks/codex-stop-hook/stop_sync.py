@@ -344,7 +344,8 @@ def main() -> int:
         return 1
     if accepted:  # 0 means nothing was uploaded because this repo isn't shared (or sharing is paused)
         noun = "exchange" if accepted == 1 else "exchanges"
-        print(f"Raindrop synced {accepted} {noun}.")
+        # stderr, not stdout: Codex reads a Stop hook's stdout as JSON and treats plain text as invalid.
+        print(f"Raindrop synced {accepted} {noun}.", file=sys.stderr)
     return 0
 
 

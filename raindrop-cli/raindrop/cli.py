@@ -70,8 +70,10 @@ def create_team(
     focus: str = typer.Option("", "--focus", help="What you work on, e.g. 'backend'."),
     api_url: str = typer.Option(None, "--api-url", help="Override the API URL."),
     force: bool = typer.Option(False, "--force", help="Replace an existing config."),
+    tools: str = typer.Option(None, "--tools", help=tools_cmd.TOOLS_OPTION_HELP),
 ):
     """Create a team, join it as the lead, and print a join code for teammates."""
+    selection = tools_cmd.validate_tools_option(tools)  # a typo fails here, before anything is created
     existing = _guard_existing(force)
     url = _api_url(api_url)
     try:
@@ -83,7 +85,7 @@ def create_team(
     typer.echo(f"Join code: {resp['join_code']}  (valid 48h)")
     typer.echo(f"Teammates run: raindrop join {resp['join_code']} --name <name> --focus <area>")
     typer.echo(f"Saved credentials to {path}")
-    typer.echo("Next: raindrop tools add claude-code")
+    tools_cmd.offer_tools(selection)
 
 
 @app.command("join")
@@ -93,8 +95,11 @@ def join(
     focus: str = typer.Option("", "--focus", help="What you work on, e.g. 'frontend'."),
     api_url: str = typer.Option(None, "--api-url", help="Override the API URL."),
     force: bool = typer.Option(False, "--force", help="Replace an existing config."),
+    tools: str = typer.Option(None, "--tools", help=tools_cmd.TOOLS_OPTION_HELP),
 ):
-    """Join a team with a join code. Saves your key to ~/.raindrop/config.json."""
+    """Join a team with a join code. Saves your key to ~/.raindrop/config.json, then offers to
+    set Raindrop up in the coding tools found on this machine."""
+    selection = tools_cmd.validate_tools_option(tools)  # a typo fails here, before anything is joined
     existing = _guard_existing(force)
     url = _api_url(api_url)
     try:
@@ -104,7 +109,7 @@ def join(
     path = config.save(config.build(url, resp, name, focus, existing))
     typer.secho(f"Joined team '{resp.get('team_name') or resp['team_id']}' as {name}", fg="green")
     typer.echo(f"Saved credentials to {path}")
-    typer.echo("Next: raindrop tools add claude-code")
+    tools_cmd.offer_tools(selection)
 
 
 @app.command("invite")

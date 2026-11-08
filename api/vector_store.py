@@ -130,10 +130,36 @@ def fetch_vectors(keys: Sequence[str]) -> dict[str, tuple[list[float], dict[str,
     return found
 
 
-def query_vectors(query_embedding: Sequence[float], team_id: str, top_k: int) -> list[VectorMatch]:
+def build_query_filter(
+    team_id: str, agent_ids: Sequence[str] | None = None, since_ts: int | None = None
+) -> dict[str, Any]:
+    """The metadata filter for a query. `team_id` is ALWAYS the first condition: it is the
+    multi-tenancy boundary, and the optional narrowing below can only ever shrink the result
+    set inside that team, never widen it. Only filterable metadata can be used here (team_id,
+    agent_id, session_id, idx, ts, s3_key, display_name); files_touched and preview are not.
+    """
+    conditions: list[dict[str, Any]] = [{"team_id": team_id}]
+    if agent_ids:
+        ids = list(agent_ids)
+        conditions.append({"agent_id": ids[0]} if len(ids) == 1 else {"agent_id": {"$in": ids}})
+    if since_ts is not None:
+        conditions.append({"ts": {"$gte": int(since_ts)}})
+    return conditions[0] if len(conditions) == 1 else {"$and": conditions}
+
+
+def query_vectors(
+    query_embedding: Sequence[float],
+    team_id: str,
+    top_k: int,
+    *,
+    agent_ids: Sequence[str] | None = None,
+    since_ts: int | None = None,
+) -> list[VectorMatch]:
     """Nearest-neighbor search, always scoped to team_id. No other function in
     this codebase may call s3vectors.query_vectors directly -- that's what
     makes this the single enforcement point of the multi-tenancy boundary.
+    `agent_ids` (only these agents) and `since_ts` (epoch seconds, newer than or equal to)
+    narrow the search further, inside the team.
 
     Requesting returnMetadata/returnDistance requires BOTH the
     s3vectors:QueryVectors and s3vectors:GetVectors IAM actions on the caller
@@ -145,7 +171,7 @@ def query_vectors(query_embedding: Sequence[float], team_id: str, top_k: int) ->
             indexName=VECTOR_INDEX_NAME,
             topK=top_k,
             queryVector={"float32": list(query_embedding)},
-            filter={"team_id": team_id},
+            filter=build_query_filter(team_id, agent_ids, since_ts),
             returnMetadata=True,
             returnDistance=True,
         )

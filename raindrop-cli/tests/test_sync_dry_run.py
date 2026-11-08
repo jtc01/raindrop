@@ -129,6 +129,7 @@ def test_cursor_latest_session_reads_spool(env):
     spool.write_text("".join(json.dumps(r) + "\n" for r in [
         {"event": "beforeSubmitPrompt", "ts": 1, "text": "hi", "cwd": str(env)},
         {"event": "afterAgentResponse", "ts": 2, "text": "yo"},
+        {"event": "stop", "ts": 3},  # a turn closes at stop
     ]))
     report = sync_cmd.run_dry_run(None, "cursor")
     assert report.session.session_id == "conv-1"

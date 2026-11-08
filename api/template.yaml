@@ -2,6 +2,12 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: raindrop API (REST + MCP on one Lambda via Lambda Web Adapter)
 
+Parameters:
+  CorsAllowOrigins:
+    Type: String
+    Default: http://localhost:5173,http://127.0.0.1:5173
+    Description: Comma-separated browser origins allowed to call the API (the dashboard, e.g. https://dxxxx.cloudfront.net)
+
 Globals:
   Function:
     Timeout: 30
@@ -100,6 +106,7 @@ Resources:
         Variables:
           AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap
           PORT: 8080
+          CORS_ALLOW_ORIGINS: !Ref CorsAllowOrigins
           AWS_LWA_READINESS_CHECK_PATH: /health
           TEAMS_TABLE: !Ref TeamsTable
           JOIN_CODES_TABLE: !Ref JoinCodesTable

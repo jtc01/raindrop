@@ -13,8 +13,8 @@ the exchange from the events. One script handles four Cursor hooks:
 |---|---|
 | `beforeSubmitPrompt` | the prompt |
 | `postToolUse` | tool names and file paths (not tool output) |
-| `afterAgentResponse` | the agent's reply; the turn is uploaded once a reply arrives |
-| `stop` | recorded, adds nothing once the reply has been uploaded |
+| `afterAgentResponse` | the agent's reply. Cursor may reply before each tool call, so the last reply of the turn wins |
+| `stop` | the turn is finished: it is uploaded now (if `stop` never fires, at the next prompt) |
 
 Events are spooled to `~/.raindrop/spools/cursor/<conversation_id>.jsonl`. The upload goes
 through the CLI's own pipeline (`raindrop.sync_cmd.run_sync`): secrets are redacted locally
@@ -57,13 +57,13 @@ twice. `raindrop tools remove cursor` removes the CLI's entries.
   checked against Cursor's hooks documentation.
 - It has **not** been run in Cursor. Cursor is not installed on the machine this was written
   on, so no real hook payload has been seen.
-- **Open question: replies.** The adapter treats a turn as finished as soon as the first
-  `afterAgentResponse` arrives. If Cursor sends a reply before each tool call (one per
-  assistant message), the uploaded "reply" would be the first message and the final answer would
-  be missed, because the position has already moved on. Reports differ on whether it fires once
-  per turn or once per message, and one says it does not fire at all in headless mode. If a real
-  session shows several replies per turn, finish the turn at `stop` instead (using the last
-  reply). `stop` is the reliable once-per-turn event.
+- **Replies.** Cursor may send a reply before each tool call (reports differ on whether
+  `afterAgentResponse` fires once per turn or once per message, and one says it does not fire at
+  all in headless mode). The adapter therefore keeps the last reply of the turn and uploads the
+  turn at `stop`, or when the next prompt starts if `stop` never fires. This has not been checked
+  against a real Cursor session.
+- The hook command written by `raindrop tools add cursor` is the full path to the program plus
+  `--fail-open`, so it works when Cursor's PATH lacks `raindrop` and a failed sync never blocks a prompt.
 
 ## Requirements
 

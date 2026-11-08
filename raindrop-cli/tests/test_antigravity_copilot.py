@@ -16,6 +16,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.delenv("COPILOT_HOME", raising=False)
     monkeypatch.delenv("RAINDROP_HOME", raising=False)
     monkeypatch.setattr("shutil.which", lambda name: None)
+    monkeypatch.setattr(copilot, "_vscode_user_dirs", lambda: [])  # never touch real VS Code dirs
     monkeypatch.setattr(config, "CONFIG_DIR", tmp_path / ".raindrop")
     monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / ".raindrop" / "config.json")
     config.save({"api_url": "https://api.test", "api_key": "rd_key_1234567890abcdef", "agent_id": "a",
@@ -98,6 +99,26 @@ def test_copilot_detect_and_copilot_home(env, monkeypatch):
     assert a.detect() and a.mcp_path() == env / ".copilot" / "mcp-config.json"
     monkeypatch.setenv("COPILOT_HOME", str(env / "elsewhere"))
     assert a.mcp_path() == env / "elsewhere" / "mcp-config.json"
+
+
+def test_copilot_also_registers_in_vscode_user_mcp_json(env, monkeypatch):
+    (env / ".copilot").mkdir()
+    user = env / "VSCodeUser"
+    user.mkdir()
+    missing = env / "NoInsiders"
+    monkeypatch.setattr(copilot, "_vscode_user_dirs", lambda: [user, missing])
+    (user / "mcp.json").write_text(json.dumps(
+        {"servers": {"mine": {"type": "stdio", "command": "x", "args": []}}, "inputs": []}))
+    for _ in range(2):
+        r = add("copilot")
+        assert r.exit_code == 0, r.output
+    data = json.loads((user / "mcp.json").read_text())
+    entry = data["servers"][constants.MCP_SERVER_NAME]
+    assert set(data["servers"]) == {"mine", constants.MCP_SERVER_NAME} and data["inputs"] == []
+    assert entry["type"] == "stdio" and entry["args"] == ["proxy"] and "env" not in entry
+    assert not missing.exists()  # only VS Code dirs that already exist are touched
+    assert runner.invoke(cli.app, ["tools", "remove", "copilot"]).exit_code == 0
+    assert set(json.loads((user / "mcp.json").read_text())["servers"]) == {"mine"}
 
 
 def test_copilot_install_remove_keeps_user_content(env):

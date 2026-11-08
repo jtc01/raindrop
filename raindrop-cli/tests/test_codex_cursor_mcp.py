@@ -44,7 +44,7 @@ def test_cursor_mcp_is_added_beside_other_servers_and_removed_cleanly(home):
     CursorAdapter().uninstall(status.to_tool_record())
     data = json.loads(path.read_text())
     assert data["mcpServers"] == {"playwright": other} and data["keep"] == 1
-    assert "raindrop sync" not in (home / ".cursor" / "hooks.json").read_text()
+    assert "sync --tool cursor" not in (home / ".cursor" / "hooks.json").read_text()
 
 
 def test_cursor_mcp_is_created_from_scratch(home):
@@ -93,7 +93,7 @@ def test_codex_mcp_edits_only_our_table_and_the_file_still_parses(home):
 
     CodexAdapter().uninstall(status.to_tool_record())
     assert path.read_text(encoding="utf-8").strip() == ORIGINAL.strip()
-    assert "raindrop sync" not in (home / ".codex" / "hooks.json").read_text()
+    assert "sync --tool codex" not in (home / ".codex" / "hooks.json").read_text()
 
 
 def test_codex_replaces_a_stale_table_wherever_it_sits(home):
@@ -129,3 +129,23 @@ def test_codex_created_from_scratch_and_removed_to_empty(home):
 def test_codex_planning_does_not_write(home):
     CodexAdapter().plan_install(rules=True)
     assert not (home / ".codex").exists()
+
+
+# ---- the post-install note (Codex only runs a hook once it is approved) ---------------------
+
+def test_codex_install_tells_the_person_to_approve_the_hook_and_other_tools_say_nothing(home):
+    from typer.testing import CliRunner
+
+    from raindrop import cli, config
+
+    config.CONFIG_DIR = home / ".raindrop"
+    config.CONFIG_PATH = config.CONFIG_DIR / "config.json"
+    config.save({"api_url": "https://api.test", "api_key": "rd_key_1234567890abcdef", "agent_id": "a",
+                 "team_id": "t", "display_name": "D", "focus": "", "tools": {}})
+    (home / ".codex").mkdir()
+    (home / ".cursor").mkdir()
+    r = CliRunner().invoke(cli.app, ["tools", "add", "codex", "--yes"])
+    assert r.exit_code == 0, r.output
+    assert "Next step in Codex: approve the new Raindrop hook" in r.output and "/hooks" in r.output and "Settings > Hooks" in r.output
+    r = CliRunner().invoke(cli.app, ["tools", "add", "cursor", "--yes"])
+    assert r.exit_code == 0 and "Next step" not in r.output
