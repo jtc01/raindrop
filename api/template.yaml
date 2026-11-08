@@ -10,6 +10,21 @@ Globals:
 Resources:
   RaindropApi:
     Type: AWS::Serverless::HttpApi
+    Properties:
+      # Applies to every route (there is no per-key quota on an HTTP API): caps a
+      # runaway hook loop or a scraped key at a cost we can live with.
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 50
+        ThrottlingRateLimit: 20
+
+  # Explicit log group so retention is set. Lambda had already auto-created
+  # /aws/lambda/<function> with no retention, and CloudFormation cannot adopt an
+  # existing group, so the function logs to this one instead.
+  RaindropLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/raindrop-api
+      RetentionInDays: 14
 
   TeamsTable:
     Type: AWS::DynamoDB::Table
@@ -79,6 +94,8 @@ Resources:
       Handler: run.sh
       Layers:
         - !Sub arn:aws:lambda:${AWS::Region}:753240598075:layer:LambdaAdapterLayerArm64:27
+      LoggingConfig:
+        LogGroup: !Ref RaindropLogGroup
       Environment:
         Variables:
           AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap

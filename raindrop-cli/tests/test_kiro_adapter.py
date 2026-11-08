@@ -64,7 +64,8 @@ def test_full_turn_is_captured_redacted_and_pushed(env):
     [ex] = push.sent[0]["exchanges"]
     assert KEY not in json.dumps(push.sent)
     assert ex["assistant_text"] == "Fixed it." and ex["idx"] == 0 and ex["id"] == "s-1:0"
-    assert ex["tool_summaries"] == ["fs_read /proj/a.py", "execute_bash: pytest -q"]
+    # In-repo paths in summaries are made repo-relative (cwd=/proj), like files_touched.
+    assert ex["tool_summaries"] == ["fs_read a.py", "execute_bash: pytest -q"]
     assert ex["files_touched"] == ["a.py"]  # relative to the repo root (cwd=/proj)
 
     # next turn gets idx 1, and the first is not resent

@@ -4,6 +4,7 @@ search.py can find it later. Called from app.py's POST /messages route.
 
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -34,6 +35,55 @@ def _vector_id(session_id: str, idx: int) -> str:
     # Matches Exchange.id in raindrop-cli/raindrop/models.py -- keep the S3 key, the
     # vector key, and the CLI's own notion of an exchange's identity in sync.
     return f"{session_id}:{idx}"
+
+
+# Defense in depth behind the client's redaction (raindrop-cli/raindrop/redact.py
+# scrubs paths, username and hostname before upload): any home-directory prefix
+# that still reaches us -- /Users/<name>/, /home/<name>/, C:\Users\<name>\ with
+# either slash, any case -- becomes ~/ so one teammate's username never lands in
+# another agent's context. Only the prefix is touched; the rest of the path stays.
+# Covers the Git Bash spelling of a Windows home too ("/c/Users/<name>/"). Must not
+# match mid-path ("/opt/home/x/", "./home/x/", "~/Users/x/"). The name may contain
+# a space or two ("C:\Users\Matt Moyer\").
+#
+# files_touched is scrubbed as well: the client normalizes it to repo-relative paths
+# today, but exchanges uploaded before that carried absolute ones.
+_HOME_DIR_PREFIX = re.compile(
+    r"""(?<![\w.~\\/-])(?:[A-Za-z]:|[\\/][A-Za-z])?[\\/](?:Users|home)[\\/]"""
+    r"""(?:[^\\/\s"'`<>|:*?]+(?: [^\\/\s"'`<>|:*?]+){0,2}(?P<sep>[\\/])"""  # "/Users/x/..." -> "~/..."
+    r"""|\w[\w\-]*(?:\.[\w\-]+)*(?![\w\-]))""",  # bare "/Users/x" -> "~" (trailing ";" or "." kept)
+    re.IGNORECASE,
+)
+# Some tools name their own files after the home path with "-" for "/":
+# ~/.claude/projects/-Users-matt-Development-raindrop/... The username is the
+# segment right after "-Users-" / "-home-" when that starts a word.
+_HOME_SLUG_USER = re.compile(r"(?P<prefix>(?<!\w)-(?:Users|home)-)[^\\/\s-]+(?=-)", re.IGNORECASE)
+SCRUBBED_TEXT_FIELDS = ("user_text", "assistant_text")
+SCRUBBED_LIST_FIELDS = ("tool_summaries", "files_touched")
+
+
+def scrub_home_paths(text: str) -> str:
+    r"""'/Users/matt/Development/x/y.py' -> '~/Development/x/y.py' (also /home/... and C:\Users\...),
+    and '-Users-matt-Development-x' -> '-Users-<user>-Development-x'."""
+    if not text:
+        return text
+    text = _HOME_DIR_PREFIX.sub(lambda m: "~/" if m.group("sep") else "~", text)
+    return _HOME_SLUG_USER.sub(r"\g<prefix><user>", text)
+
+
+def scrub_exchange_paths(exchange: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `exchange` with scrub_home_paths applied to user_text, assistant_text and
+    every tool_summaries and files_touched entry. Shared with scripts/scrub_paths.py so
+    stored documents are scrubbed exactly as new ones are."""
+    out = dict(exchange)
+    for field in SCRUBBED_TEXT_FIELDS:
+        if isinstance(out.get(field), str):
+            out[field] = scrub_home_paths(out[field])
+    for field in SCRUBBED_LIST_FIELDS:
+        items = out.get(field)
+        if isinstance(items, list):
+            out[field] = [scrub_home_paths(s) if isinstance(s, str) else s for s in items]
+    return out
 
 
 def vector_metadata(doc: dict[str, Any], s3_key: str) -> dict[str, Any]:
@@ -102,6 +152,7 @@ def ingest_exchanges(identity: dict[str, Any], exchanges: list[dict[str, Any]]) 
     accepted_ids: list[str] = []
 
     for exchange in exchanges[:MAX_EXCHANGES_PER_REQUEST]:
+        exchange = scrub_exchange_paths(exchange)
         session_id = exchange["session_id"]
         idx = exchange["idx"]
         vector_id = _vector_id(session_id, idx)

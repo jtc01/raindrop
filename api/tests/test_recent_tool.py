@@ -23,6 +23,11 @@ def wired(monkeypatch):
     return calls
 
 
+def app_entries(text):
+    """The '- ' entry lines inside the untrusted-data fence."""
+    return [l for l in text.splitlines() if l.startswith("- ")]
+
+
 def call(args):
     async def go():
         async with Client(app.mcp) as c:
@@ -35,7 +40,7 @@ def test_tool_is_registered_and_returns_attributed_trimmed_text(wired):
     # The tools return compact labeled lines for an agent to read, not raw dicts.
     tools, text = call({"n": 3})
     assert "get_recent_activity" in tools
-    [line] = text.splitlines()
+    [line] = app_entries(text)  # fenced as untrusted data; see test_format.py
     assert line.startswith('- Bob (1970-01-01 00:00 UTC): "q" -> "'.replace("->", "→"))  # who, when, prompt
     assert line.endswith("[files: a.py]")
     assert len(line) < 400  # the 5000-character reply is trimmed to a snippet
