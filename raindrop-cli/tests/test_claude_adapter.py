@@ -40,6 +40,7 @@ def tool(name, **inp):
 
 
 def session(tmp_path, content):
+    (tmp_path / ".git").mkdir(exist_ok=True)  # tmp_path is the repo root, wherever the temp dir lives
     p = tmp_path / "s.jsonl"
     p.write_bytes(content.encode())  # bytes, not write_text: Windows would turn \n into \r\n
     return ClaudeCodeAdapter().session_from_hook(

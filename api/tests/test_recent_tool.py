@@ -59,3 +59,16 @@ def test_include_self_and_n_is_clamped(wired):
     assert wired["n"] == app.RECENT_N_MAX and wired["exclude"] is None
     call({"n": 0})
     assert wired["n"] == 1
+
+
+def test_each_exchange_is_exactly_one_line_even_when_the_text_has_newlines(wired):
+    wired["results"] = [
+        {"agent_id": "bob", "ts": 5, "files_touched": [], "user_text": "line one\n\nline two\r\n  indented",
+         "assistant_text": "first\nsecond\n\n```\ncode block\n```"},
+        {"agent_id": "bob", "ts": 6, "files_touched": ["a.py"], "user_text": "q2", "assistant_text": "a2"},
+    ]
+    _, text = call({"n": 2})
+    lines = app_entries(text)  # the entry lines inside the untrusted-data fence
+    assert len(lines) == 2  # two exchanges, two lines
+    assert "line one line two indented" in lines[0] and "first second ``` code block ```" in lines[0]
+    assert lines[1].endswith("[files: a.py]")
