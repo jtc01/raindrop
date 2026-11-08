@@ -234,3 +234,26 @@ class CursorAdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_codex_context_messages_are_not_taken_for_prompts(tmp_path):
+    """Real Codex transcripts begin with injected 'user' messages (environment, open page).
+    They have no reply, so they must not hold back the real exchange that follows."""
+    import json
+    from pathlib import Path
+
+    from raindrop.adapters.base import SessionRef
+    from raindrop.adapters.codex import CodexAdapter
+
+    def msg(role, text):
+        return {"type": "response_item", "timestamp": "2026-11-07T20:00:00Z",
+                "payload": {"type": "message", "role": role,
+                            "content": [{"type": "input_text" if role == "user" else "output_text", "text": text}]}}
+
+    records = [msg("user", "<environment_context>\n  <cwd>C:/proj</cwd>\n</environment_context>"),
+               msg("user", '<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>'),
+               msg("user", "how many cannons?"), msg("assistant", "1337.")]
+    path = tmp_path / "rollout.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+    result = CodexAdapter().read_new(SessionRef("s1", Path(path), None), 0)
+    assert [(e.user_text, e.assistant_text) for e in result.exchanges] == [("how many cannons?", "1337.")]

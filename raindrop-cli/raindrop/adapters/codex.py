@@ -207,6 +207,19 @@ class _Draft:
         )
 
 
+# Codex puts its own context into the transcript as "user" messages (environment, open page,
+# instructions). They have no reply of their own, so counting one as a prompt would hold back
+# every real exchange after it.
+_INJECTED = re.compile(
+    r"\s*(<(environment_context|external_codex_apps_\w*|user_instructions|permissions|collaboration_mode|"
+    r"turn_aborted|skills?_instructions|apps_instructions)|# AGENTS\.md instructions)"
+)
+
+
+def _is_injected(prompt: str) -> bool:
+    return bool(_INJECTED.match(prompt))
+
+
 def _record_data(record: dict) -> tuple[str | None, dict]:
     record_type = record.get("type")
     payload = record.get("payload")
@@ -349,7 +362,7 @@ class CodexAdapter(Adapter):
             role, payload = _record_data(record)
             if role == "user":
                 prompt = _text(payload.get("content"))
-                if prompt:
+                if prompt and not _is_injected(prompt):
                     drafts.append(_Draft(start, _epoch(record.get("timestamp")), prompt))
             elif role == "assistant" and drafts:
                 content = payload.get("content")
