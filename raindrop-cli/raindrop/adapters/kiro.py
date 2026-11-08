@@ -319,16 +319,20 @@ class KiroAdapter(Adapter):
                     if isinstance(f, str) and f not in draft.files:
                         draft.files.append(f)
             elif event == "stop" and draft:
-                if text.strip():
-                    done.append((draft.start, Exchange(
-                        session_id=session.session_id,
-                        idx=len(done),
-                        ts=draft.ts,
-                        user_text=draft.user_text,
-                        assistant_text=text.strip(),
-                        tool_summaries=draft.tools,
-                        files_touched=repo_relative_files(draft.files, session),
-                    )))
+                # Kiro CLI does not include assistant_response in the Stop hook
+                # payload (https://github.com/kirodotdev/Kiro/issues/6258), so
+                # text is always empty here. Accept the exchange regardless so
+                # the prompt and tool context still reaches teammates. When Kiro
+                # ships the payload field, the response will appear automatically.
+                done.append((draft.start, Exchange(
+                    session_id=session.session_id,
+                    idx=len(done),
+                    ts=draft.ts,
+                    user_text=draft.user_text,
+                    assistant_text=text.strip(),
+                    tool_summaries=draft.tools,
+                    files_touched=repo_relative_files(draft.files, session),
+                )))
                 draft = None
 
         # An open draft is a turn still in progress: hold it back.
