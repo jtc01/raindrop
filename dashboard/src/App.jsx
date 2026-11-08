@@ -217,33 +217,64 @@ function Connect({ error, onConnect, onSample }) {
   const [apiUrl, setApiUrl] = useState("")
   const [apiKey, setApiKey] = useState("")
   return (
-    <div className="app">
-      <main className="feed">
-        <form
-          className="search"
-          onSubmit={(event) => {
-            event.preventDefault()
-            onConnect({ apiUrl: apiUrl.trim(), apiKey: apiKey.trim() })
-          }}
-        >
+    <div className="connect">
+      <form
+        className="connect-card"
+        onSubmit={(event) => {
+          event.preventDefault()
+          onConnect({ apiUrl: apiUrl.trim(), apiKey: apiKey.trim() })
+        }}
+      >
+        <p className="product">raindrop</p>
+        <h1>Connect to your team</h1>
+        <p className="lede">See what everyone's agents have been working on.</p>
+
+        <div className="field">
           <label htmlFor="url">API URL</label>
-          <input id="url" required value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} />
+          <input
+            id="url"
+            type="url"
+            required
+            autoFocus
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="https://your-api.example.com"
+            value={apiUrl}
+            onChange={(e) => setApiUrl(e.target.value)}
+          />
+        </div>
+
+        <div className="field">
           <label htmlFor="key">API key</label>
           <input
             id="key"
             type="password"
             required
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Paste your agent key"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
           />
-          {error && <p className="empty">{error}</p>}
-          <p className="count">
-            The key is kept in this browser only (find it in ~/.raindrop/config.json).
+          <p className="hint">
+            Both are in <code>~/.raindrop/config.json</code> after <code>raindrop join</code>.
+            The key stays in this browser.
           </p>
-          <button type="submit" className="more">Connect</button>{" "}
-          <button type="button" className="more" onClick={onSample}>Use sample data</button>
-        </form>
-      </main>
+        </div>
+
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+
+        <button type="submit" className="primary">
+          Connect
+        </button>
+        <button type="button" className="ghost" onClick={onSample}>
+          Preview with sample data
+        </button>
+      </form>
     </div>
   )
 }
@@ -277,7 +308,7 @@ function App() {
   }
 
   if (data) return <Feed data={data} onDisconnect={disconnect} />
-  if (connection && !error) return <p className="empty">Loading…</p>
+  if (connection && !error) return <p className="loading">Loading your team…</p>
   return (
     <Connect
       error={error}
